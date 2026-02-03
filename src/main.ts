@@ -20,6 +20,16 @@ export default class PersonalFinancePlugin extends Plugin {
 			options: () => ([]),
 		});
 
+		// @ts-ignore
+		this.registerBasesView('transaction-table', {
+			name: 'Transaction Table',
+			icon: 'lucide-table',
+			factory: (controller: any, containerEl: HTMLElement) => {
+				return new TransactionTableView(controller, containerEl) as any
+			},
+			options: () => ([]),
+		});
+
 		this.addSettingTab(new FinanceSettingTab(this.app, this));
 	}
 
@@ -56,6 +66,7 @@ export class FinanceDashboardView extends BasesView {
 		super(controller);
 		this.controller = controller;
 		this.containerEl = parentEl.createDiv('bases-finance-dashboard');
+		console.log(this);
 	}
 
 	private categorizeAccounts(): AccountCategory {
@@ -374,6 +385,221 @@ export class FinanceDashboardView extends BasesView {
 
 			.chart-wrapper canvas {
 				max-height: 300px;
+			}
+		`;
+		document.head.appendChild(style);
+	}
+}
+
+// @ts-ignore
+export class TransactionTableView extends BasesView {
+	readonly type = 'transaction-table';
+	private containerEl: HTMLElement;
+	// @ts-ignore
+	public app: App;
+	public config: any;
+	public data: any;
+	private controller: any;
+
+	constructor(controller: any, parentEl: HTMLElement) {
+		super(controller);
+		this.controller = controller;
+		this.containerEl = parentEl.createDiv('transaction-table-container');
+	}
+
+	public onDataUpdated(): void {
+		this.containerEl.empty();
+		this.addStyles();
+
+		const propertiesToShow = this.allProperties || this.config.getOrder();
+		if (!propertiesToShow) {
+			this.containerEl.createDiv({ text: 'No properties configured.' });
+			return;
+		}
+
+		// Categorize properties
+		const accountProps: string[] = [];
+		const otherProps: { date?: string; comment?: string } = {};
+
+		for (const prop of propertiesToShow) {
+			// @ts-ignore
+			const { type, name } = parsePropertyId(prop);
+			if (type !== 'note') continue;
+
+			const lowerName = name.toLowerCase();
+			if (lowerName.startsWith('asset') || lowerName.startsWith('liabilit') ||
+				lowerName.startsWith('income') || lowerName.startsWith('expense')) {
+				accountProps.push(prop);
+			} else if (lowerName === 'date') {
+				otherProps.date = prop;
+			} else if (lowerName === 'comment') {
+				otherProps.comment = prop;
+			}
+		}
+
+		// Create table
+		const table = this.containerEl.createEl('table', { cls: 'transaction-table' });
+		const thead = table.createEl('thead');
+		const tbody = table.createEl('tbody');
+
+		// Create header row
+		const headerRow = thead.createEl('tr');
+		headerRow.createEl('th', { text: 'Date' });
+		headerRow.createEl('th', { text: 'File' });
+		if (otherProps.comment) {
+			headerRow.createEl('th', { text: 'Comment' });
+		}
+
+		for (const prop of accountProps) {
+			// @ts-ignore
+			const { name } = parsePropertyId(prop);
+			headerRow.createEl('th', { text: formatAccountName(name) });
+		}
+
+		// Create summary row
+		const summaryRow = tbody.createEl('tr', { cls: 'summary-row' });
+		summaryRow.createEl('td', { text: 'TOTALS', cls: 'summary-label' });
+		summaryRow.createEl('td', { text: '' });
+		if (otherProps.comment) {
+			summaryRow.createEl('td', { text: '' });
+		}
+
+		for (const prop of accountProps) {
+			// @ts-ignore
+			const summaryValue = this.data.getSummaryValue(this.controller, this.data.data, prop, 'Sum');
+			const td = summaryRow.createEl('td', { cls: 'summary-value' });
+			// @ts-ignore
+			if (summaryValue && summaryValue.data && typeof summaryValue.data === 'number') {
+				// @ts-ignore
+				td.textContent = formatCurrency(summaryValue.data);
+			} else {
+				td.textContent = '-';
+			}
+		}
+
+		// Create data rows
+		const entries = this.data.data || [];
+		for (const entry of entries) {
+			const row = tbody.createEl('tr');
+
+			// Date column
+			const dateCell = row.createEl('td');
+			if (otherProps.date) {
+				// @ts-ignore
+				const dateValue = entry.getValue(otherProps.date);
+				// @ts-ignore
+				if (dateValue && dateValue.date) {
+					// @ts-ignore
+					dateCell.textContent = dateValue.date.toLocaleDateString();
+				}
+			}
+
+			// File column
+			const fileCell = row.createEl('td');
+			const fileLink = fileCell.createEl('a', {
+				text: entry.file.basename,
+				cls: 'file-link'
+			});
+			fileLink.addEventListener('click', (e) => {
+				e.preventDefault();
+				// @ts-ignore
+				this.app.workspace.openLinkText(entry.file.path, '', false);
+			});
+
+			// Comment column
+			if (otherProps.comment) {
+				const commentCell = row.createEl('td');
+				// @ts-ignore
+				const commentValue = entry.getValue(otherProps.comment);
+				// @ts-ignore
+				if (commentValue && commentValue.data) {
+					// @ts-ignore
+					commentCell.textContent = commentValue.data;
+				}
+			}
+
+			// Account columns
+			for (const prop of accountProps) {
+				const cell = row.createEl('td');
+				// @ts-ignore
+				const value = entry.getValue(prop);
+				// @ts-ignore
+				if (value && value.data && typeof value.data === 'number') {
+					// @ts-ignore
+					cell.textContent = formatCurrency(value.data);
+				} else {
+					cell.textContent = '-';
+				}
+			}
+		}
+	}
+
+	private addStyles(): void {
+		const styleEl = document.getElementById('transaction-table-styles');
+		if (styleEl) return;
+
+		const style = document.createElement('style');
+		style.id = 'transaction-table-styles';
+		style.textContent = `
+			.transaction-table-container {
+				padding: 20px;
+				overflow-x: auto;
+			}
+
+			.transaction-table {
+				width: 100%;
+				border-collapse: collapse;
+				font-family: var(--font-interface);
+				font-size: 14px;
+			}
+
+			.transaction-table th {
+				background: var(--background-secondary);
+				color: var(--text-normal);
+				padding: 12px;
+				text-align: left;
+				font-weight: 600;
+				border: 1px solid var(--background-modifier-border);
+				position: sticky;
+				top: 0;
+				z-index: 10;
+			}
+
+			.transaction-table td {
+				padding: 10px 12px;
+				border: 1px solid var(--background-modifier-border);
+			}
+
+			.transaction-table tr:hover {
+				background: var(--background-modifier-hover);
+			}
+
+			.summary-row {
+				background: var(--background-secondary-alt);
+				font-weight: 600;
+				position: sticky;
+				top: 45px;
+				z-index: 9;
+			}
+
+			.summary-label {
+				font-weight: 700;
+				color: var(--text-accent);
+			}
+
+			.summary-value {
+				font-family: var(--font-monospace);
+				font-weight: 700;
+			}
+
+			.file-link {
+				color: var(--text-accent);
+				cursor: pointer;
+				text-decoration: none;
+			}
+
+			.file-link:hover {
+				text-decoration: underline;
 			}
 		`;
 		document.head.appendChild(style);
