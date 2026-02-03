@@ -78,6 +78,25 @@ function isAccountProperty(name: string): boolean {
 	return categorizeProperty(name) !== null;
 }
 
+function getPropertyOrder(name: string): number {
+	if (name.startsWith(ACCOUNT_PREFIXES.ASSET)) return 1;
+	if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) return 2;
+	if (name.startsWith(ACCOUNT_PREFIXES.LIABILITY)) return 3;
+	if (name.startsWith(ACCOUNT_PREFIXES.EXPENSE)) return 4;
+	if (name.startsWith(ACCOUNT_PREFIXES.INCOME)) return 5;
+	return 99;
+}
+
+function sortProperties(props: string[]): string[] {
+	return props.slice().sort((a, b) => {
+		// @ts-ignore
+		const { name: nameA } = parsePropertyId(a);
+		// @ts-ignore
+		const { name: nameB } = parsePropertyId(b);
+		return getPropertyOrder(nameA) - getPropertyOrder(nameB);
+	});
+}
+
 // @ts-ignore
 export class FinanceDashboardView extends BasesView {
 	readonly type = FinanceDashboardViewType;
@@ -123,7 +142,17 @@ export class FinanceDashboardView extends BasesView {
 			if (!summaryValue || !summaryValue.data || typeof summaryValue.data !== 'number') continue;
 
 			// @ts-ignore
-			const sum = summaryValue.data;
+			let sum = summaryValue.data;
+
+			// Apply commodity pricing if applicable
+			if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+				const commodityName = name.replace(ACCOUNT_PREFIXES.COMMODITY, '');
+				const pricing = this.plugin.settings.commodityPrices[commodityName];
+				if (pricing) {
+					sum = sum * pricing.value;
+				}
+			}
+
 			categories[category].set(name, sum);
 		}
 
@@ -457,7 +486,7 @@ export class TransactionTableView extends BasesView {
 		}
 
 		// Categorize properties
-		const accountProps: string[] = [];
+		let accountProps: string[] = [];
 		const otherProps: { date?: string; comment?: string } = {};
 
 		for (const prop of propertiesToShow) {
@@ -473,6 +502,9 @@ export class TransactionTableView extends BasesView {
 				otherProps.comment = prop;
 			}
 		}
+
+		// Sort account properties by category order
+		accountProps = sortProperties(accountProps);
 
 		// Create table
 		const table = this.containerEl.createEl('table', { cls: 'transaction-table' });
@@ -516,9 +548,10 @@ export class TransactionTableView extends BasesView {
 			}
 		}
 
-		// Create data rows
+		// Create data rows (limit to top 10 for display)
 		const entries = this.data.data || [];
-		for (const entry of entries) {
+		const entriesToDisplay = entries.slice(0, 10);
+		for (const entry of entriesToDisplay) {
 			const row = tbody.createEl('tr');
 
 			// Date column
@@ -529,7 +562,7 @@ export class TransactionTableView extends BasesView {
 				// @ts-ignore
 				if (dateValue && dateValue.date) {
 					// @ts-ignore
-					dateCell.textContent = dateValue.date.toLocaleDateString();
+					dateCell.textContent = dateValue.date.toLocaleString();
 				}
 			}
 
@@ -567,11 +600,19 @@ export class TransactionTableView extends BasesView {
 			for (const prop of accountProps) {
 				const cell = row.createEl('td');
 				// @ts-ignore
+				const { name } = parsePropertyId(prop);
+				// @ts-ignore
 				const value = entry.getValue(prop);
 				// @ts-ignore
 				if (value && value.data && typeof value.data === 'number') {
-					// @ts-ignore
-					cell.textContent = formatCurrency(value.data, this.plugin.settings.currencySymbol);
+					// Show raw quantity for commodities, currency for others
+					if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						// @ts-ignore
+						cell.textContent = value.data.toFixed(2);
+					} else {
+						// @ts-ignore
+						cell.textContent = formatCurrency(value.data, this.plugin.settings.currencySymbol);
+					}
 				} else {
 					cell.textContent = '-';
 				}

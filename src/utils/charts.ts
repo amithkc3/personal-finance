@@ -65,5 +65,5 @@ export function formatCurrency(amount: number, currencySymbol: string = '₹'): 
         maximumFractionDigits: 2
     }).format(Math.abs(amount));
 
-    return `${currencySymbol}${formatted}`;
+    return `${currencySymbol} ${formatted}`;
 }
