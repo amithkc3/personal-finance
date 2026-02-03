@@ -221,8 +221,30 @@ export class FinanceDashboardView extends BasesView {
 				.sort((a, b) => b[1] - a[1])
 				.forEach(([name, value]) => {
 					const row = assetsCol.createDiv('account-row');
-					row.createSpan({ text: name, cls: 'account-name' });
-					row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value positive' });
+
+					// Add color class
+					if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						row.addClass('col-commodity');
+					} else {
+						row.addClass('col-asset');
+					}
+
+					const nameSpan = row.createSpan({ text: name, cls: 'account-name' });
+					const valueSpan = row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value positive' });
+
+					// Add formula for commodities
+					if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						const commodityName = name.replace(ACCOUNT_PREFIXES.COMMODITY, '');
+						const pricing = this.plugin.settings.commodityPrices[commodityName];
+						if (pricing) {
+							const formulaDiv = row.createDiv({ cls: 'commodity-formula' });
+							if (pricing.currency !== this.plugin.settings.currencySymbol) {
+								formulaDiv.textContent = `${pricing.value} ${pricing.currency}/unit × ${this.plugin.settings.usdToInr} ${this.plugin.settings.currencySymbol}/USD`;
+							} else {
+								formulaDiv.textContent = `${pricing.value} ${pricing.currency}/unit`;
+							}
+						}
+					}
 				});
 		}
 
@@ -235,6 +257,7 @@ export class FinanceDashboardView extends BasesView {
 				.sort((a, b) => a[1] - b[1])
 				.forEach(([name, value]) => {
 					const row = liabilitiesCol.createDiv('account-row');
+					row.addClass('col-liability');
 					row.createSpan({ text: name, cls: 'account-name' });
 					row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value negative' });
 				});
@@ -249,6 +272,7 @@ export class FinanceDashboardView extends BasesView {
 				.sort((a, b) => a[1] - b[1])
 				.forEach(([name, value]) => {
 					const row = incomeCol.createDiv('account-row');
+					row.addClass('col-income');
 					row.createSpan({ text: name, cls: 'account-name' });
 					row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value' });
 				});
@@ -263,6 +287,7 @@ export class FinanceDashboardView extends BasesView {
 				.sort((a, b) => b[1] - a[1])
 				.forEach(([name, value]) => {
 					const row = expensesCol.createDiv('account-row');
+					row.addClass('col-expense');
 					row.createSpan({ text: name, cls: 'account-name' });
 					row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value' });
 				});
@@ -417,6 +442,44 @@ export class FinanceDashboardView extends BasesView {
 
 			.account-value.negative {
 				color: #ef4444;
+			}
+
+			.account-row.col-asset {
+				background-color: rgba(16, 185, 129, 0.05);
+				border-radius: 4px;
+				padding: 10px 8px;
+			}
+
+			.account-row.col-commodity {
+				background-color: rgba(59, 130, 246, 0.05);
+				border-radius: 4px;
+				padding: 10px 8px;
+			}
+
+			.account-row.col-liability {
+				background-color: rgba(251, 191, 36, 0.05);
+				border-radius: 4px;
+				padding: 10px 8px;
+			}
+
+			.account-row.col-income {
+				background-color: rgba(16, 185, 129, 0.05);
+				border-radius: 4px;
+				padding: 10px 8px;
+			}
+
+			.account-row.col-expense {
+				background-color: rgba(239, 68, 68, 0.05);
+				border-radius: 4px;
+				padding: 10px 8px;
+			}
+
+			.commodity-formula {
+				font-size: 11px;
+				color: var(--text-muted);
+				font-family: var(--font-monospace);
+				margin-top: 4px;
+				padding-left: 4px;
 			}
 
 			.charts-container {
@@ -623,7 +686,7 @@ export class TransactionTableView extends BasesView {
 				if (commentValue && commentValue.data) {
 					// @ts-ignore
 					const text = commentValue.data.toString();
-					commentCell.textContent = text.length > 100 ? text.substring(0, 100) + '...' : text;
+					commentCell.textContent = text.length > 50 ? text.substring(0, 50) + '...' : text;
 				}
 			}
 
@@ -766,7 +829,9 @@ export class TransactionTableView extends BasesView {
 
 		.transaction-table th,
 		.transaction-table td {
-			min-width: 100px;
+			min-width: 150px;
+			max-width: 200px;
+			word-wrap: break-word;
 		}
 
 		.col-asset {
@@ -774,11 +839,11 @@ export class TransactionTableView extends BasesView {
 		}
 
 		.col-commodity {
-			background-color: rgba(251, 191, 36, 0.1);
+			background-color: rgba(59, 130, 246, 0.1);
 		}
 
 		.col-liability {
-			background-color: rgba(239, 68, 68, 0.1);
+			background-color: rgba(251, 191, 36, 0.1);
 		}
 
 		.col-expense {
