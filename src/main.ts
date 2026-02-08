@@ -384,14 +384,14 @@ export class FinanceDashboardView extends BasesView {
 		// Row 1: Compact Net Worth + Actions
 		this.createTopRow(netWorth, categories, invalidCount);
 
-		// Row 2: Net Worth Line Chart (full width)
+		// Row 2: Transaction Table (Moved here as requested)
+		this.createTransactionTable();
+
+		// Row 3: Net Worth Line Chart (full width)
 		this.createNetWorthChart();
 
-		// Row 3 & 4: Category blocks with integrated pie charts
+		// Row 4 & 5: Category blocks with integrated pie charts
 		this.createCategoryBlocks(categories);
-
-		// Row 5: Transaction Table
-		this.createTransactionTable();
 	}
 
 	private createTopRow(netWorth: number, categories: AccountCategory, invalidCount: number): void {
@@ -435,9 +435,10 @@ export class FinanceDashboardView extends BasesView {
 		if (invalidCount > 0) {
 			validationBtn.textContent = `${invalidCount} Invalid Transactions`;
 			validationBtn.addClass('invalid-transactions-btn');
-			// Add warning style via JS or class if needed, assuming CSS handles generic button
-			validationBtn.style.backgroundColor = '#ef4444'; // Red
-			validationBtn.style.color = 'white';
+			// Use text color instead of background as requested
+			validationBtn.style.color = '#ef4444'; // Red
+			validationBtn.style.backgroundColor = 'transparent';
+			validationBtn.style.border = '1px solid #ef4444';
 
 			validationBtn.addEventListener('click', () => {
 				new Notice(`Please check the ${invalidCount} invalid transactions in the table below.\nEnsure the sum of all accounts in each transaction is 0.`);
@@ -445,8 +446,11 @@ export class FinanceDashboardView extends BasesView {
 		} else {
 			validationBtn.textContent = '✓ All recent transactions valid';
 			validationBtn.addClass('valid-transactions-btn');
-			validationBtn.style.backgroundColor = '#10b981'; // Green
-			validationBtn.style.color = 'white';
+			// Use text color instead of background
+			validationBtn.style.color = '#10b981'; // Green
+			validationBtn.style.backgroundColor = 'transparent';
+			validationBtn.style.border = '1px solid #10b981';
+
 			// Optional: Make it clickable to confirm validity
 			validationBtn.addEventListener('click', () => {
 				new Notice('All processed transactions are valid!');
@@ -1400,7 +1404,7 @@ export class FinanceDashboardView extends BasesView {
 			.category-total {
 				font-size: 20px;
 				font-weight: 700;
-				color: var(--text-accent);
+				color: var(--finance-bright-blue);
 				font-family: var(--font-monospace);
 			}
 
@@ -1711,6 +1715,7 @@ export class FinanceDashboardView extends BasesView {
 			/* Transaction Table Styles */
 			.transaction-table-section {
 				margin-top: 30px;
+				margin-bottom: 30px; /* Added spacing below table */
 				background: var(--background-secondary);
 				border-radius: 12px;
 				padding: 20px;
