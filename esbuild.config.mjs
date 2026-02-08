@@ -93,6 +93,10 @@ const context = await esbuild.context({
 			});
 		},
 	}],
+	loader: {
+		'.md': 'text',
+		'.base': 'text',
+	},
 });
 
 if (prod) {

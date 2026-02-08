@@ -2,6 +2,14 @@ import { App, Plugin, BasesView, parsePropertyId, Modal, Notice } from 'obsidian
 import { DEFAULT_SETTINGS, FinancePluginSettings, FinanceSettingTab } from "./settings";
 import { createPieChart, formatCurrency, createNetWorthLineChart, SnapshotDataPoint } from "./utils/charts";
 
+// Resource imports
+// @ts-ignore
+import usageGuideContent from './resources/Personal-finances-usage-guide.md';
+// @ts-ignore
+import transactionTemplateContent from './resources/Transaction.md';
+// @ts-ignore
+import financesBaseContent from './resources/Finances.base';
+
 export const FinanceDashboardViewType = 'finance-dashboard';
 
 // Strict account prefix definitions
@@ -18,6 +26,7 @@ export default class PersonalFinancePlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		await this.ensureFileStructure();
 
 		// @ts-ignore
 		this.registerBasesView(FinanceDashboardViewType, {
@@ -69,7 +78,65 @@ export default class PersonalFinancePlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	async ensureFileStructure() {
+		try {
+			// Create Root Folder
+			if (!(await this.app.vault.adapter.exists(this.settings.rootFolderPath))) {
+				await this.app.vault.createFolder(this.settings.rootFolderPath);
+			}
 
+			// Create Transactions Folder
+			if (!(await this.app.vault.adapter.exists(this.settings.transactionsFolderPath))) {
+				await this.app.vault.createFolder(this.settings.transactionsFolderPath);
+			}
+
+			// Create Snapshots Folder
+			if (!(await this.app.vault.adapter.exists(this.settings.snapshotsFolderPath))) {
+				await this.app.vault.createFolder(this.settings.snapshotsFolderPath);
+			}
+
+			// 1. Create Usage Guide
+			const guidePath = this.settings.usageGuideFilePath;
+			// Create parent folder for usage guide if it doesn't exist
+			const guideDir = guidePath.substring(0, guidePath.lastIndexOf('/'));
+			if (guideDir && !(await this.app.vault.adapter.exists(guideDir))) {
+				await this.app.vault.createFolder(guideDir);
+			}
+
+			if (!(await this.app.vault.adapter.exists(guidePath))) {
+				await this.app.vault.create(guidePath, usageGuideContent);
+			}
+
+			// 2. Create Default Template
+			if (!(await this.app.vault.adapter.exists(this.settings.templateFilePath))) {
+				// Create parent folder for template if it doesn't exist
+				const templateDir = this.settings.templateFilePath.substring(0, this.settings.templateFilePath.lastIndexOf('/'));
+				if (templateDir && !(await this.app.vault.adapter.exists(templateDir))) {
+					await this.app.vault.createFolder(templateDir);
+				}
+
+				// Inject the dynamic usage guide link
+				// Remove extension from path for the wiki link
+				const guideLinkPath = this.settings.usageGuideFilePath.replace(/\.md$/, '');
+				const templateContent = transactionTemplateContent.replace('{{USAGE_GUIDE_LINK}}', guideLinkPath);
+
+				await this.app.vault.create(this.settings.templateFilePath, templateContent);
+				new Notice('Created default transaction template');
+			}
+
+			// 3. Create Finance.base
+			const basePath = `${this.settings.rootFolderPath}/Finances.base`;
+			if (!(await this.app.vault.adapter.exists(basePath))) {
+				// Inject the dynamic transaction folder path
+				const baseContent = financesBaseContent.replace('{{TRANSACTIONS_FOLDER}}', this.settings.transactionsFolderPath);
+				await this.app.vault.create(basePath, baseContent);
+			}
+
+		} catch (error) {
+			console.error('Error ensuring file structure:', error);
+			new Notice('Error creating finance folders/template');
+		}
+	}
 }
 
 // Modal Classes
@@ -98,7 +165,7 @@ class CurrencyRateModal extends Modal {
 			if (!isNaN(value) && value > 0) {
 				this.plugin.settings.usdToInr = value;
 				await this.plugin.saveSettings();
-				new Notice(`Currency rate updated to ${value}`);
+				new Notice(`Currency rate updated to ${value} `);
 				this.close();
 			} else {
 				new Notice('Please enter a valid number');
@@ -137,7 +204,7 @@ class TableRowsModal extends Modal {
 			if (!isNaN(value) && value > 0) {
 				this.plugin.settings.tableRowsToShow = value;
 				await this.plugin.saveSettings();
-				new Notice(`Table rows updated to ${value}`);
+				new Notice(`Table rows updated to ${value} `);
 				this.close();
 			} else {
 				new Notice('Please enter a valid number');
@@ -354,12 +421,65 @@ export class FinanceDashboardView extends BasesView {
 			await this.createSnapshot(categories);
 		});
 
-		// Placeholder buttons for future actions
+		// Log Transaction button
+		const logTransactionBtn = actionsContainer.createEl('button', {
+			text: 'Log Transaction',
+			cls: 'action-button'
+		});
+		logTransactionBtn.addEventListener('click', async () => {
+			await this.logTransaction();
+		});
+
+		// Placeholder for future action
 		const placeholder1 = actionsContainer.createEl('button', {
-			text: 'Action 2',
+			text: 'Action 3',
 			cls: 'action-button action-placeholder'
 		});
 		placeholder1.disabled = true;
+	}
+
+	private async logTransaction(): Promise<void> {
+		try {
+			const templatePath = this.plugin.settings.templateFilePath;
+			const transactionsFolder = this.plugin.settings.transactionsFolderPath;
+
+			if (!(await this.plugin.app.vault.adapter.exists(templatePath))) {
+				new Notice('Template file not found. Please check settings.');
+				return;
+			}
+
+			const templateFile = this.plugin.app.vault.getAbstractFileByPath(templatePath);
+			if (!templateFile) {
+				new Notice('Error loading template file.');
+				return;
+			}
+
+			// Read template content
+			const templateContent = await this.plugin.app.vault.read(templateFile as any);
+
+			// Generate filename
+			const now = new Date();
+			const filename = `Transaction - ${now.getFullYear()} -${String(now.getMonth() + 1).padStart(2, '0')} -${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')} -${String(now.getMinutes()).padStart(2, '0')} -${String(now.getSeconds()).padStart(2, '0')}.md`;
+			const filepath = `${transactionsFolder}/${filename}`;
+
+			// Replace date placeholder if exists (simple replacement)
+			// Note: Obsidian templates might handle this differently, but simple replacement works for custom logic
+			const content = templateContent.replace('{{date:YYYY-MM-DDTHH:mm}}', now.toISOString().slice(0, 16));
+
+			// Create file
+			const newFile = await this.plugin.app.vault.create(filepath, content);
+
+			// Open the new file
+			// @ts-ignore
+			const leaf = this.plugin.app.workspace.getLeaf(true);
+			// @ts-ignore
+			await leaf.openFile(newFile);
+
+			new Notice('Transaction logged');
+		} catch (error) {
+			console.error('Error logging transaction:', error);
+			new Notice('Error creating transaction file');
+		}
 	}
 
 	private createAccountBreakdown(categories: AccountCategory): void {

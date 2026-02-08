@@ -1,0 +1,48 @@
+summaries:
+  new summary: values.reduce(acc+if(value, value, 0))
+  Filled: values.filter(!value.isType("null")).length
+  new summary 2: |
+    values.reduce(value, acc+value)
+filters:
+  and:
+    - file.folder == "{{TRANSACTIONS_FOLDER}}"
+formulas:
+  column sum: if(assets_hdfcbank, assets_hdfcbank, 0) + if(assets_sbibank, assets_sbibank, 0)
+  date: date.format("YYYY-MM-DD")
+  Untitled: if(liabilities_ccard, liabilities_ccard, 0)
+  NW: formula["column sum"]+formula.Untitled
+  valid_transaction: formula.
+properties:
+  formula.column sum:
+    displayName: ASSETS
+  note.date:
+    displayName: datetime
+  formula.Untitled:
+    displayName: LIABILITIES
+views:
+  - type: finance-dashboard
+    name: dashboard
+    order:
+      - file.name
+  - type: transaction-table
+    name: tableview
+    order:
+      - file.name
+      - a#b#c
+  - type: table
+    name: default-tableview
+    groupBy:
+      property: date
+      direction: DESC
+    order:
+      - file.name
+      - comment
+      - formula.date
+    sort:
+      - property: formula.date
+        direction: DESC
+      - property: file.name
+        direction: DESC
+    summaries:
+      Asset-Bank: Sum
+      Expense-General: Sum

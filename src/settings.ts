@@ -11,7 +11,11 @@ export interface FinancePluginSettings {
 	commodityPrices: Record<string, CommodityPrice>;
 	usdToInr: number;
 	tableRowsToShow: number;
+	rootFolderPath: string;
+	transactionsFolderPath: string;
 	snapshotsFolderPath: string;
+	templateFilePath: string;
+	usageGuideFilePath: string;
 }
 
 export const DEFAULT_SETTINGS: FinancePluginSettings = {
@@ -19,7 +23,11 @@ export const DEFAULT_SETTINGS: FinancePluginSettings = {
 	commodityPrices: {},
 	usdToInr: 83.0,
 	tableRowsToShow: 10,
-	snapshotsFolderPath: 'transaction-snapshots'
+	rootFolderPath: 'Finance',
+	transactionsFolderPath: 'Finance/Transactions',
+	snapshotsFolderPath: 'Finance/Snapshots',
+	templateFilePath: 'Finance/Templates/Transaction.md',
+	usageGuideFilePath: 'Finance/Personal-finances-usage-guide.md'
 }
 
 export class FinanceSettingTab extends PluginSettingTab {
@@ -35,6 +43,9 @@ export class FinanceSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		containerEl.createEl('h2', { text: 'Personal Finance Settings' });
+
+		// General & Currency Section
+		containerEl.createEl('h3', { text: 'General & Currency' });
 
 		new Setting(containerEl)
 			.setName('Currency Symbol')
@@ -63,31 +74,6 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Table Rows to Display')
-			.setDesc('Number of transaction rows to show in the table view')
-			.addText(text => text
-				.setPlaceholder('10')
-				.setValue(this.plugin.settings.tableRowsToShow.toString())
-				.onChange(async (value) => {
-					const parsed = parseInt(value);
-					if (!isNaN(parsed) && parsed > 0) {
-						this.plugin.settings.tableRowsToShow = parsed;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName('Snapshots Folder Path')
-			.setDesc('Folder path where snapshots will be saved (relative to vault root)')
-			.addText(text => text
-				.setPlaceholder('transaction-snapshots')
-				.setValue(this.plugin.settings.snapshotsFolderPath)
-				.onChange(async (value) => {
-					this.plugin.settings.snapshotsFolderPath = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
 			.setName('Commodity Prices')
 			.setDesc('Configure commodity prices in JSON format. Example: {"QCOM": {"value": 150.50, "currency": "$"}}')
 			.addTextArea(text => text
@@ -101,6 +87,78 @@ export class FinanceSettingTab extends PluginSettingTab {
 					} catch (e) {
 						// Invalid JSON, don't save
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName('Table Rows to Display')
+			.setDesc('Number of transaction rows to show in the table view')
+			.addText(text => text
+				.setPlaceholder('10')
+				.setValue(this.plugin.settings.tableRowsToShow.toString())
+				.onChange(async (value) => {
+					const parsed = parseInt(value);
+					if (!isNaN(parsed) && parsed > 0) {
+						this.plugin.settings.tableRowsToShow = parsed;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		// File & Folder Structure Section
+		containerEl.createEl('h3', { text: 'File & Folder Structure' });
+
+		new Setting(containerEl)
+			.setName('Root Finance Folder')
+			.setDesc('Root folder for all finance related files')
+			.addText(text => text
+				.setPlaceholder('Finance')
+				.setValue(this.plugin.settings.rootFolderPath)
+				.onChange(async (value) => {
+					this.plugin.settings.rootFolderPath = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Transactions Folder Path')
+			.setDesc('Folder where new transaction files will be created')
+			.addText(text => text
+				.setPlaceholder('Finance/Transactions')
+				.setValue(this.plugin.settings.transactionsFolderPath)
+				.onChange(async (value) => {
+					this.plugin.settings.transactionsFolderPath = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Snapshots Folder Path')
+			.setDesc('Folder where net worth snapshots will be saved')
+			.addText(text => text
+				.setPlaceholder('Finance/Snapshots')
+				.setValue(this.plugin.settings.snapshotsFolderPath)
+				.onChange(async (value) => {
+					this.plugin.settings.snapshotsFolderPath = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Transaction Template Path')
+			.setDesc('Path to the markdown file used as a template for new transactions')
+			.addText(text => text
+				.setPlaceholder('Finance/Templates/Transaction.md')
+				.setValue(this.plugin.settings.templateFilePath)
+				.onChange(async (value) => {
+					this.plugin.settings.templateFilePath = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Usage Guide Path')
+			.setDesc('Path where the usage guide will be created and linked')
+			.addText(text => text
+				.setPlaceholder('Finance/Personal-finances-usage-guide.md')
+				.setValue(this.plugin.settings.usageGuideFilePath)
+				.onChange(async (value) => {
+					this.plugin.settings.usageGuideFilePath = value;
+					await this.plugin.saveSettings();
 				}));
 	}
 }
