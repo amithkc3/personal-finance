@@ -1,6 +1,6 @@
 import { App, Plugin, BasesView, parsePropertyId, Modal, Notice } from 'obsidian';
 import { DEFAULT_SETTINGS, FinancePluginSettings, FinanceSettingTab } from "./settings";
-import { createPieChart, formatCurrency } from "./utils/charts";
+import { createPieChart, formatCurrency, createNetWorthLineChart, SnapshotDataPoint } from "./utils/charts";
 
 export const FinanceDashboardViewType = 'finance-dashboard';
 
@@ -323,6 +323,7 @@ export class FinanceDashboardView extends BasesView {
 		this.createNetWorthCard(netWorth, totalAssets, totalLiabilities);
 		this.createAccountBreakdown(categories);
 		this.createCharts(categories);
+		this.createNetWorthChart();
 		this.createSnapshotButton(categories);
 	}
 
@@ -565,6 +566,79 @@ export class FinanceDashboardView extends BasesView {
 		}
 	}
 
+	private async loadSnapshots(): Promise<SnapshotDataPoint[]> {
+		const snapshots: SnapshotDataPoint[] = [];
+		const folderPath = this.plugin.settings.snapshotsFolderPath;
+
+		try {
+			const folder = this.plugin.app.vault.getAbstractFileByPath(folderPath);
+			// @ts-ignore - TFolder has children property
+			if (!folder || !folder.children) {
+				return snapshots;
+			}
+
+			// Get all markdown files in the snapshots folder
+			const files = folder.children.filter((file: any) => file.extension === 'md');
+
+			for (const file of files) {
+				try {
+					const content = await this.plugin.app.vault.read(file);
+					const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+
+					if (!frontmatterMatch) continue;
+
+					const frontmatter = frontmatterMatch[1];
+					const lines = frontmatter.split('\n');
+
+					let date: Date | null = null;
+					let assets = 0;
+					let liabilities = 0;
+
+					// @ts-ignore
+					for (const line of lines) {
+						const colonIndex = line.indexOf(':');
+						if (colonIndex === -1) continue;
+
+						const key = line.substring(0, colonIndex).trim();
+						const value = line.substring(colonIndex + 1).trim();
+
+						if (key === 'date') {
+							date = new Date(value);
+						} else if (key.startsWith('Asset-') || key.startsWith('Commodity-')) {
+							assets += parseFloat(value) || 0;
+						} else if (key.startsWith('Liability-')) {
+							liabilities += parseFloat(value) || 0;
+						}
+					}
+
+					if (date) {
+						const netWorth = assets + liabilities; // liabilities are negative
+						snapshots.push({ date, netWorth, assets, liabilities });
+					}
+				} catch (error) {
+					console.error(`Error reading snapshot file ${file.path}:`, error);
+				}
+			}
+		} catch (error) {
+			console.error('Error loading snapshots:', error);
+		}
+
+		return snapshots;
+	}
+
+	private async createNetWorthChart(): Promise<void> {
+		const snapshots = await this.loadSnapshots();
+
+		if (snapshots.length === 0) {
+			return; // Don't show chart if no snapshots
+		}
+
+		const chartContainer = this.containerEl.createDiv('net-worth-chart-container');
+		chartContainer.createEl('h3', { text: 'Net Worth Over Time' });
+		const canvas = chartContainer.createEl('canvas');
+		createNetWorthLineChart(canvas, snapshots, this.plugin.settings.currencySymbol);
+	}
+
 	private addStyles(): void {
 		const styleEl = document.getElementById('finance-dashboard-styles');
 		if (styleEl) return;
@@ -801,6 +875,27 @@ export class FinanceDashboardView extends BasesView {
 
 			.chart-wrapper canvas {
 				max-height: 300px;
+			}
+
+			.net-worth-chart-container {
+				background: var(--background-secondary);
+				border-radius: 12px;
+				padding: 20px;
+				margin-top: 20px;
+				border: 1px solid var(--background-modifier-border);
+			}
+
+			.net-worth-chart-container h3 {
+				margin: 0 0 16px 0;
+				font-size: 16px;
+				color: var(--text-muted);
+				text-transform: uppercase;
+				letter-spacing: 1px;
+				text-align: center;
+			}
+
+			.net-worth-chart-container canvas {
+				max-height: 400px;
 			}
 
 			.snapshot-button-container {

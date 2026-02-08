@@ -67,3 +67,124 @@ export function formatCurrency(amount: number, currencySymbol: string = '₹'): 
 
     return `${currencySymbol} ${formatted}`;
 }
+
+export interface SnapshotDataPoint {
+    date: Date;
+    netWorth: number;
+    assets: number;
+    liabilities: number;
+}
+
+export function createNetWorthLineChart(
+    canvas: HTMLCanvasElement,
+    snapshots: SnapshotDataPoint[],
+    currencySymbol: string
+): Chart {
+    // Sort snapshots by date
+    const sortedSnapshots = snapshots.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    const labels = sortedSnapshots.map(s => s.date.toLocaleDateString());
+    const netWorthData = sortedSnapshots.map(s => s.netWorth);
+    const assetsData = sortedSnapshots.map(s => s.assets);
+    const liabilitiesData = sortedSnapshots.map(s => s.liabilities);
+
+    const config: ChartConfiguration = {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Net Worth',
+                    data: netWorthData,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'Total Assets',
+                    data: assetsData,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    pointRadius: 3,
+                    pointHoverRadius: 5
+                },
+                {
+                    label: 'Total Liabilities',
+                    data: liabilitiesData,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    pointRadius: 3,
+                    pointHoverRadius: 5
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        color: 'var(--text-normal)',
+                        padding: 15,
+                        font: {
+                            size: 13,
+                            weight: 600
+                        },
+                        usePointStyle: true,
+                        pointStyle: 'circle'
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: (context: any) => {
+                            const label = context.dataset.label || '';
+                            const value = formatCurrency(context.parsed.y, currencySymbol);
+                            return `${label}: ${value}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    ticks: {
+                        color: 'var(--text-muted)',
+                        callback: function (value: any) {
+                            return formatCurrency(value, currencySymbol);
+                        }
+                    },
+                    grid: {
+                        color: 'var(--background-modifier-border)'
+                    }
+                },
+                x: {
+                    ticks: {
+                        color: 'var(--text-muted)',
+                        maxRotation: 45,
+                        minRotation: 45
+                    },
+                    grid: {
+                        color: 'var(--background-modifier-border)'
+                    }
+                }
+            }
+        }
+    };
+
+    return new Chart(canvas, config);
+}
