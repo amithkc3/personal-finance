@@ -24,25 +24,3 @@ views:
     name: dashboard
     order:
       - file.name
-  - type: transaction-table
-    name: tableview
-    order:
-      - file.name
-      - a#b#c
-  - type: table
-    name: default-tableview
-    groupBy:
-      property: date
-      direction: DESC
-    order:
-      - file.name
-      - comment
-      - formula.date
-    sort:
-      - property: formula.date
-        direction: DESC
-      - property: file.name
-        direction: DESC
-    summaries:
-      Asset-Bank: Sum
-      Expense-General: Sum

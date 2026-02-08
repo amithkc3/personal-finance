@@ -11,7 +11,7 @@ Every transaction is a separate markdown file. By summing up the properties of a
 	- **Transactions/**: Holds all your individual transaction notes.
 	- **Snapshots/**: Periodic snapshots of your Net Worth for historical tracking.
 	- **Templates/**: Contains the transaction template.
-- **Finances.base**: The central dashboard and table views.
+- **Finances.base**: The central dashboard.
 
 ## Account Prefixes
 The plugin strictly uses prefixes to categorize accounts. You **MUST** use these prefixes for the system to recognize your data.

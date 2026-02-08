@@ -1,90 +1,83 @@
-# Obsidian Sample Plugin
+# Personal Finance Plugin for Obsidian
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+A comprehensive personal finance dashboard for Obsidian, supporting double-entry accounting principles directly within your vault.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Double-Entry Accounting**: Track assets, liabilities, income, and expenses using frontmatter properties in your daily notes or dedicated transaction files.
+- **Interactive Dashboard**:
+    - **Net Worth**: Real-time calculation and display of your net worth.
+    - **Recent Transactions Table**: View, filter, and validate recent transactions.
+    - **Visualizations**: Charts for Net Worth over time and category breakdowns (Assets, Liabilities, Income, Expenses).
+    - **Validation**: Built-in validation to ensure transaction balance (Assets - Liabilities + Income - Expenses = 0).
+- **Snapshotting**: Create periodical snapshots of your financial state for historical tracking.
+- **Flexible & Customizable**: Works with your existing folder structure (customizable in settings).
+- **Mobile Friendly**: Responsive design that works great on mobile devices.
 
-## First time developing plugins?
+## Installation
 
-Quick starting guide for new plugin devs:
+### Manual Installation
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+1.  Create a folder named `personal-finance` inside your vault's `.obsidian/plugins/` directory.
+2.  Copy `main.js`, `styles.css`, and `manifest.json` to that folder.
+3.  Reload Obsidian and enable "Personal Finance" in Community Plugins settings.
 
-## Releasing new releases
+### Recommended Folder Name
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+For best compatibility and consistency, please ensure the plugin folder is named `personal-finance`.
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+## Usage
 
-## Adding your plugin to the community plugin list
+### 1. Recording Transactions
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+Create a note (e.g., in a `Transactions` folder) and add frontmatter properties starting with the following prefixes:
 
-## How to use
+- `Asset-`: e.g., `Asset-Bank`, `Asset-Cash`
+- `Liability-`: e.g., `Liability-CreditCard`
+- `Income-`: e.g., `Income-Salary`
+- `Expense-`: e.g., `Expense-Groceries`
+- `Commodity-`: e.g., `Commodity-Gold` (for tracking quantities)
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+**Example Transaction:**
 
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```yaml
+---
+date: 2024-05-20T10:00
+Asset-Bank: -50
+Expense-Groceries: 50
+---
 ```
 
-If you have multiple URLs, you can also do:
+### 2. The Dashboard
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+Open the dashboard by clicking the "Personal Finance" icon in the ribbon or using the command `Open Finance Dashboard`.
 
-## API Documentation
+- **Top Row**: Shows your current Net Worth and quick actions (Snapshot, Log Transaction).
+- **Recent Transactions**: Verify your recent entries. Green checks indicate balanced transactions.
+- **Charts**: Visual breakdown of your finances.
 
-See https://docs.obsidian.md
+### 3. Settings
+
+Go to **Settings > Personal Finance** to configure:
+
+- **Currency Symbol**: Set your preferred currency (e.g., $, ₹, €).
+- **Folder Paths**: Define where snapshots and transaction files are stored.
+- **Accounts**: Customize the list of accounts available for autocomplete.
+
+## Development
+
+1.  Clone the repository.
+2.  Run `npm install`.
+3.  Run `npm run dev` to start the watcher for development.
+4.  Run `npm run build` to create a production build (minified).
+
+## Releasing
+
+1.  Update version in `manifest.json` and `versions.json`.
+2.  Run `npm run build`.
+3.  Create a new Release on GitHub.
+4.  Upload the following files from the root folder:
+    - `main.js`
+    - `styles.css`
+    - `manifest.json`
+

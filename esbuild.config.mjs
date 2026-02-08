@@ -1,8 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "node:module";
-import fs from "node:fs";
-import path from "node:path";
 
 const banner =
 	`/*
@@ -12,50 +10,6 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
-
-// Read manifest to get plugin ID
-const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
-const pluginId = manifest.id;
-
-// Define output directory and target symlink path
-const outDir = ".dist";
-const targetDir = path.join("..", ".obsidian", "plugins", pluginId);
-
-// Ensure .dist exists
-if (!fs.existsSync(outDir)) {
-	fs.mkdirSync(outDir);
-}
-
-// Copy static files
-function copyStaticFiles() {
-	fs.copyFileSync("manifest.json", path.join(outDir, "manifest.json"));
-	if (fs.existsSync("styles.css")) {
-		fs.copyFileSync("styles.css", path.join(outDir, "styles.css"));
-	}
-}
-
-copyStaticFiles();
-
-// Create symlink if it doesn't exist
-// usage: node esbuild.config.mjs
-// assumes repo is in Vault/repo-name
-if (!fs.existsSync(targetDir)) {
-	try {
-		// Create the plugins folder if it doesn't exist (e.g. fresh vault)
-		const pluginsDir = path.join("..", ".obsidian", "plugins");
-		if (!fs.existsSync(pluginsDir)) {
-			fs.mkdirSync(pluginsDir, { recursive: true });
-		}
-
-		// Windows requires 'junction' for directory symlinks usually, but we'll try to detect or just use junction
-		// passing 'junction' is safer for Windows + Directory
-		const type = process.platform === "win32" ? "junction" : "dir";
-		fs.symlinkSync(path.resolve(outDir), path.resolve(targetDir), type);
-		console.log(`Created symlink: ${targetDir} -> ${outDir}`);
-	} catch (e) {
-		console.error("Failed to create symlink:", e);
-	}
-}
 
 const context = await esbuild.context({
 	banner: {
@@ -83,16 +37,8 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: path.join(outDir, "main.js"), // output to .dist
+	outfile: "main.js",
 	minify: prod,
-	plugins: [{
-		name: 'copy-static-metrics',
-		setup(build) {
-			build.onEnd(() => {
-				copyStaticFiles();
-			});
-		},
-	}],
 	loader: {
 		'.md': 'text',
 		'.base': 'text',

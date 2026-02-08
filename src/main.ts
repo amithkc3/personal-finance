@@ -28,6 +28,14 @@ export default class PersonalFinancePlugin extends Plugin {
 		await this.loadSettings();
 		await this.ensureFileStructure();
 
+		// Listen for external changes to settings (e.g. from sync)
+		this.registerEvent(this.app.vault.on('modify', async (file) => {
+			const settingsPath = `${this.settings.rootFolderPath}/finance-settings.json`;
+			if (file.path === settingsPath) {
+				await this.loadSettings();
+			}
+		}));
+
 		// @ts-ignore
 		this.registerBasesView(FinanceDashboardViewType, {
 			name: 'Finance Dashboard',
@@ -41,9 +49,9 @@ export default class PersonalFinancePlugin extends Plugin {
 
 		// Add commands
 		this.addCommand({
-			id: 'update-currency-rate',
-			name: 'Update USD to INR Rate',
-			callback: () => new CurrencyRateModal(this.app, this).open()
+			id: 'update-rates-and-prices',
+			name: 'Update Rates & Prices',
+			callback: () => new RatesAndPricesModal(this.app, this).open()
 		});
 
 		this.addCommand({
@@ -52,21 +60,56 @@ export default class PersonalFinancePlugin extends Plugin {
 			callback: () => new TableRowsModal(this.app, this).open()
 		});
 
-		this.addCommand({
-			id: 'update-commodity-prices',
-			name: 'Update Commodity Prices',
-			callback: () => new CommodityPricesModal(this.app, this).open()
-		});
-
 		this.addSettingTab(new FinanceSettingTab(this.app, this));
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<FinancePluginSettings>);
+		// 1. Load local settings first to get the root folder path
+		const localData = await this.loadData();
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, localData);
+
+		// 2. Try to load from vault settings file
+		const settingsPath = `${this.settings.rootFolderPath}/finance-settings.json`;
+		if (await this.app.vault.adapter.exists(settingsPath)) {
+			try {
+				const content = await this.app.vault.adapter.read(settingsPath);
+				const vaultSettings = JSON.parse(content);
+				// Override local settings with vault settings
+				this.settings = Object.assign({}, this.settings, vaultSettings);
+				// Also update local data to match, to keep them in sync
+				await this.saveData(this.settings);
+			} catch (e) {
+				console.error('Error loading settings from vault:', e);
+				new Notice('Error loading synced settings');
+			}
+		}
 	}
 
 	async saveSettings() {
+		// 1. Save to local data
 		await this.saveData(this.settings);
+
+		// 2. Save to vault settings file
+		try {
+			const settingsPath = `${this.settings.rootFolderPath}/finance-settings.json`;
+
+			// Ensure root folder exists (just in case)
+			if (!(await this.app.vault.adapter.exists(this.settings.rootFolderPath))) {
+				await this.app.vault.createFolder(this.settings.rootFolderPath);
+			}
+
+			if (await this.app.vault.adapter.exists(settingsPath)) {
+				const file = this.app.vault.getAbstractFileByPath(settingsPath);
+				if (file instanceof TFile) {
+					await this.app.vault.modify(file, JSON.stringify(this.settings, null, 2));
+				}
+			} else {
+				await this.app.vault.create(settingsPath, JSON.stringify(this.settings, null, 2));
+			}
+		} catch (e) {
+			console.error('Error saving settings to vault:', e);
+			new Notice('Error saving settings to vault file');
+		}
 	}
 
 	async ensureFileStructure() {
@@ -130,8 +173,9 @@ export default class PersonalFinancePlugin extends Plugin {
 	}
 }
 
-// Modal Classes
-class CurrencyRateModal extends Modal {
+
+// Combined Modal
+class RatesAndPricesModal extends Modal {
 	plugin: PersonalFinancePlugin;
 
 	constructor(app: App, plugin: PersonalFinancePlugin) {
@@ -141,26 +185,66 @@ class CurrencyRateModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Update USD to INR Rate' });
+		contentEl.createEl('h2', { text: 'Update Rates & Prices' });
 
-		const input = contentEl.createEl('input', {
+		// 1. Currency Rate Section
+		contentEl.createEl('h3', { text: 'USD to INR Rate' });
+		const rateInput = contentEl.createEl('input', {
 			type: 'number',
 			value: this.plugin.settings.usdToInr.toString()
 		});
-		input.style.width = '100%';
-		input.style.marginBottom = '10px';
+		rateInput.style.width = '100%';
+		rateInput.style.marginBottom = '20px';
 
-		const button = contentEl.createEl('button', { text: 'Update' });
+		// 2. Commodity Prices Section
+		contentEl.createEl('h3', { text: 'Commodity Prices' });
+		contentEl.createEl('p', { text: 'JSON format: {"QCOM": {"value": 150.50, "currency": "$"}}' });
+
+		const pricesTextarea = contentEl.createEl('textarea');
+		pricesTextarea.value = JSON.stringify(this.plugin.settings.commodityPrices, null, 2);
+		pricesTextarea.style.width = '100%';
+		pricesTextarea.style.height = '150px';
+		pricesTextarea.style.marginBottom = '20px';
+
+		// Save Button
+		const button = contentEl.createEl('button', { text: 'Save All Changes', cls: 'mod-cta' });
+		button.style.width = '100%';
+
 		button.addEventListener('click', async () => {
-			const value = parseFloat(input.value);
-			if (!isNaN(value) && value > 0) {
-				this.plugin.settings.usdToInr = value;
-				await this.plugin.saveSettings();
-				new Notice(`Currency rate updated to ${value} `);
-				this.close();
-			} else {
-				new Notice('Please enter a valid number');
+			let rateUpdated = false;
+			let pricesUpdated = false;
+
+			// Process Rate
+			const newRate = parseFloat(rateInput.value);
+			if (!isNaN(newRate) && newRate > 0) {
+				this.plugin.settings.usdToInr = newRate;
+				rateUpdated = true;
 			}
+
+			// Process Prices
+			try {
+				const parsed = JSON.parse(pricesTextarea.value);
+
+				// Apply default currency if missing
+				for (const key in parsed) {
+					const item = parsed[key];
+					if (typeof item === 'object' && item !== null && typeof item.value === 'number') {
+						if (!item.currency) {
+							item.currency = this.plugin.settings.currencySymbol;
+						}
+					}
+				}
+
+				this.plugin.settings.commodityPrices = parsed;
+				pricesUpdated = true;
+			} catch (error) {
+				new Notice('Invalid JSON in commodity prices');
+				return; // Stop if JSON is invalid
+			}
+
+			await this.plugin.saveSettings();
+			new Notice(`Settings updated! Rate: ${newRate}, Prices saved.`);
+			this.close();
 		});
 	}
 
@@ -209,44 +293,7 @@ class TableRowsModal extends Modal {
 	}
 }
 
-class CommodityPricesModal extends Modal {
-	plugin: PersonalFinancePlugin;
-
-	constructor(app: App, plugin: PersonalFinancePlugin) {
-		super(app);
-		this.plugin = plugin;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Update Commodity Prices' });
-		contentEl.createEl('p', { text: 'Enter JSON format: {"QCOM": {"value": 150.50, "currency": "$"}}' });
-
-		const textarea = contentEl.createEl('textarea');
-		textarea.value = JSON.stringify(this.plugin.settings.commodityPrices, null, 2);
-		textarea.style.width = '100%';
-		textarea.style.height = '200px';
-		textarea.style.marginBottom = '10px';
-
-		const button = contentEl.createEl('button', { text: 'Update' });
-		button.addEventListener('click', async () => {
-			try {
-				const parsed = JSON.parse(textarea.value);
-				this.plugin.settings.commodityPrices = parsed;
-				await this.plugin.saveSettings();
-				new Notice('Commodity prices updated');
-				this.close();
-			} catch (error) {
-				new Notice('Invalid JSON format');
-			}
-		});
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
+// ... (AccountCategory interface and helper functions remain unchanged)
 
 interface AccountCategory {
 	assets: Map<string, number>;
@@ -310,7 +357,7 @@ export class FinanceDashboardView extends BasesView {
 	}
 
 	public categorizeAccounts(): AccountCategory {
-
+		// ... (implementation same as before)
 		const categories: AccountCategory = {
 			assets: new Map(),
 			liabilities: new Map(),
@@ -366,7 +413,7 @@ export class FinanceDashboardView extends BasesView {
 		this.containerEl.empty();
 		this.containerEl.addClass('finance-dashboard-container');
 
-		this.addStyles();
+
 
 		const categories = this.categorizeAccounts();
 
@@ -426,6 +473,17 @@ export class FinanceDashboardView extends BasesView {
 		logTransactionBtn.addEventListener('click', async () => {
 			await this.logTransaction();
 		});
+
+		// Unified Update Rates/Prices button
+		const updateBtn = actionsContainer.createEl('button', {
+			text: 'Update Rates & Prices',
+			cls: 'action-button'
+		});
+		updateBtn.addEventListener('click', () => {
+			new RatesAndPricesModal(this.app, this.plugin).open();
+		});
+
+		// ...
 
 		// Validation button (Action 3)
 		const validationBtn = actionsContainer.createEl('button', {
@@ -1226,624 +1284,6 @@ export class FinanceDashboardView extends BasesView {
 		createNetWorthLineChart(canvas, snapshots, this.plugin.settings.currencySymbol);
 	}
 
-	private addStyles(): void {
-		const styleEl = document.getElementById('finance-dashboard-styles');
-		if (styleEl) return;
 
-		const style = document.createElement('style');
-		style.id = 'finance-dashboard-styles';
-		style.textContent = `
-			:root {
-				--finance-bright-blue: #3b82f6;
-				--finance-positive: #10b981;
-				--finance-negative: #ef4444;
-			}
-
-			.finance-dashboard-container {
-				padding: 20px;
-				font-family: var(--font-interface);
-			}
-
-			.dashboard-card {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 24px;
-				margin-bottom: 20px;
-				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			/* Top Row: Responsive Layout */
-			.dashboard-top-row {
-				display: flex;
-				flex-wrap: wrap;
-				gap: 20px;
-				margin-bottom: 20px;
-			}
-
-			.compact-net-worth-card {
-				background: linear-gradient(135deg, var(--background-secondary) 0%, var(--background-primary-alt) 100%);
-				border-radius: 16px;
-				padding: 24px 32px;
-				border: 2px solid var(--background-modifier-border);
-				box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
-				display: flex;
-				flex: 1;
-				min-width: 300px;
-				flex-direction: column;
-				justify-content: center;
-				align-items: flex-start;
-			}
-
-			.net-worth-info {
-				display: flex;
-				flex-direction: column;
-				justify-content: center;
-				width: 100%;
-			}
-
-			.compact-net-worth-card h3 {
-				margin: 0 0 8px 0;
-				font-size: 11px;
-				color: var(--text-muted);
-				font-weight: 700;
-				text-transform: uppercase;
-				letter-spacing: 1.5px;
-			}
-
-			.compact-net-worth-amount {
-				font-size: 48px;
-				font-weight: 800;
-				font-family: var(--font-monospace);
-				color: var(--finance-bright-blue);
-				text-shadow: 0 2px 12px rgba(59, 130, 246, 0.3);
-				margin: 0;
-				word-break: break-all; /* Prevent overflow of long numbers */
-				line-height: 1.2;
-			}
-
-			/* Actions Block */
-			.dashboard-actions-block {
-				display: flex;
-				flex-direction: column;
-				gap: 12px;
-				min-width: 200px;
-				flex: 0 0 auto;
-			}
-
-			/* Responsive Adjustments */
-			@media (max-width: 600px) {
-				.dashboard-top-row {
-					flex-direction: column;
-				}
-				
-				.compact-net-worth-card {
-					min-width: 0;
-					width: 100%;
-					align-items: center; /* Center on mobile */
-				}
-				
-				.compact-net-worth-amount {
-					text-align: center;
-					font-size: 36px; /* Smaller font on mobile */
-				}
-
-				.net-worth-info h3 {
-					text-align: center;
-				}
-
-				.dashboard-actions-block {
-					width: 100%;
-					min-width: 0;
-				}
-			}
-
-			.action-button {
-				background: var(--interactive-accent);
-				color: var(--text-on-accent);
-				border: none;
-				border-radius: 8px;
-				padding: 8px 16px;
-				font-size: 13px;
-				font-weight: 600;
-				cursor: pointer;
-				transition: all 0.2s ease;
-				text-align: center;
-				display: block;
-				width: 100%;
-			}
-
-			.action-button:hover:not(:disabled) {
-				background: var(--interactive-accent-hover);
-				transform: translateY(-1px);
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-			}
-
-			.action-button:active:not(:disabled) {
-				transform: translateY(0);
-			}
-
-			.action-button.action-placeholder {
-				background: var(--background-modifier-border);
-				color: var(--text-muted);
-				cursor: not-allowed;
-				opacity: 0.5;
-			}
-
-			/* Category Blocks */
-			.category-blocks-row {
-				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-				gap: 20px;
-				margin-bottom: 20px;
-			}
-
-			.category-block {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.category-block-header {
-				display: flex;
-				justify-content: space-between;
-				align-items: center;
-				margin-bottom: 16px;
-				padding-bottom: 12px;
-				border-bottom: 2px solid var(--background-modifier-border);
-			}
-
-			.category-block-header h3 {
-				margin: 0;
-				font-size: 16px;
-				color: var(--text-muted);
-				letter-spacing: 1px;
-			}
-
-			.category-total {
-				font-size: 20px;
-				font-weight: 700;
-				color: var(--finance-bright-blue);
-				font-family: var(--font-monospace);
-			}
-
-			.category-chart-container {
-				margin-bottom: 20px;
-				padding: 10px;
-			}
-
-			.category-chart-container canvas {
-				max-height: 350px;
-			}
-
-			.category-list-container {
-				/* Removed max-height to show all accounts */
-			}
-
-			.net-worth-card h2 {
-				margin: 0 0 16px 0;
-				font-size: 18px;
-				color: var(--text-muted);
-				text-transform: uppercase;
-				letter-spacing: 1px;
-			}
-
-			.net-worth-amount {
-				font-size: 48px;
-				font-weight: 700;
-				margin-bottom: 20px;
-				font-family: var(--font-monospace);
-			}
-
-			.net-worth-amount.positive {
-				color: #10b981;
-			}
-
-			.net-worth-amount.negative {
-				color: #ef4444;
-			}
-
-			.net-worth-breakdown {
-				border-top: 1px solid var(--background-modifier-border);
-				padding-top: 16px;
-			}
-
-			.breakdown-row {
-				display: flex;
-				justify-content: space-between;
-				align-items: center;
-				padding: 8px 0;
-			}
-
-			.breakdown-label {
-				font-size: 16px;
-				color: var(--text-normal);
-			}
-
-			.breakdown-value {
-				font-size: 20px;
-				font-weight: 600;
-				font-family: var(--font-monospace);
-			}
-
-			.breakdown-value.positive {
-				color: #10b981;
-			}
-
-			.breakdown-value.negative {
-				color: #ef4444;
-			}
-
-			.account-breakdown-container {
-				display: flex;
-				flex-direction: column;
-				gap: 20px;
-				margin-bottom: 20px;
-			}
-
-			.breakdown-row-container {
-				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-				gap: 20px;
-			}
-
-			.account-column {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.account-column h3 {
-				margin: 0;
-				font-size: 16px;
-				color: var(--text-muted);
-				text-transform: uppercase;
-				letter-spacing: 1px;
-			}
-
-			.column-header {
-				display: flex;
-				justify-content: space-between;
-				align-items: center;
-				margin-bottom: 16px;
-				border-bottom: 2px solid var(--background-modifier-border);
-				padding-bottom: 8px;
-			}
-
-			.category-sum {
-				font-size: 18px;
-				font-weight: 700;
-				color: var(--finance-bright-blue);
-				font-family: var(--font-monospace);
-			}
-
-			.account-row {
-				display: flex;
-				flex-direction: column;
-				padding: 10px 0;
-				border-bottom: 1px solid var(--background-modifier-border-hover);
-			}
-
-			.account-name-container {
-				display: flex;
-				flex-direction: row;
-				align-items: center;
-				margin-bottom: 4px;
-			}
-
-			.account-row:last-child {
-				border-bottom: none;
-			}
-
-			.account-name {
-				font-size: 14px;
-				color: var(--text-normal);
-			}
-
-			.account-value {
-				font-size: 16px;
-				font-weight: 600;
-			}
-
-			.commodity-units {
-				font-size: 12px;
-				color: var(--text-muted);
-				font-weight: normal;
-				margin-left: 4px;
-			}
-
-			.average-row {
-				font-weight: 600;
-				border-top: 2px solid var(--background-modifier-border);
-				margin-top: 8px;
-				padding-top: 12px;
-			}
-
-			.avg-value {
-				color: var(--text-accent);
-			}
-
-			.account-value.positive {
-				font-family: var(--font-monospace);
-				color: #10b981;
-			}
-
-			.account-value.negative {
-				color: #ef4444;
-			}
-
-			.account-row.col-asset {
-				background-color: rgba(16, 185, 129, 0.05);
-				border-radius: 4px;
-				padding: 10px 8px;
-			}
-
-			.account-row.col-commodity {
-				background-color: rgba(59, 130, 246, 0.05);
-				border-radius: 4px;
-				padding: 10px 8px;
-			}
-
-			.account-row.col-liability {
-				background-color: rgba(251, 191, 36, 0.05);
-				border-radius: 4px;
-				padding: 10px 8px;
-			}
-
-			.account-row.col-income {
-				background-color: rgba(16, 185, 129, 0.05);
-				border-radius: 4px;
-				padding: 10px 8px;
-			}
-
-			.account-row.col-expense {
-				background-color: rgba(239, 68, 68, 0.05);
-				border-radius: 4px;
-				padding: 10px 8px;
-			}
-
-			/* Generic Column Colors for Table */
-			.col-asset {
-				background-color: rgba(16, 185, 129, 0.05);
-			}
-			
-			.col-commodity {
-				background-color: rgba(59, 130, 246, 0.05);
-			}
-			
-			.col-liability {
-				background-color: rgba(251, 191, 36, 0.05);
-			}
-			
-			.col-income {
-				background-color: rgba(16, 185, 129, 0.05);
-			}
-			
-			.col-expense {
-				background-color: rgba(239, 68, 68, 0.05);
-			}
-
-			.commodity-formula {
-				font-size: 11px;
-				color: var(--text-muted);
-				font-family: var(--font-monospace);
-				margin-top: 4px;
-				padding-left: 4px;
-			}
-
-			.charts-container {
-				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-				gap: 20px;
-			}
-
-			.chart-wrapper {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.chart-wrapper h3 {
-				margin: 0 0 16px 0;
-				font-size: 16px;
-				color: var(--text-muted);
-				text-transform: uppercase;
-				letter-spacing: 1px;
-				text-align: center;
-			}
-
-			.chart-wrapper canvas {
-				max-height: 300px;
-			}
-
-			.net-worth-chart-container {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				margin-top: 20px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.net-worth-chart-container h3 {
-				margin: 0 0 16px 0;
-				font-size: 16px;
-				color: var(--text-muted);
-				text-transform: uppercase;
-				letter-spacing: 1px;
-				text-align: center;
-			}
-
-			.net-worth-chart-container canvas {
-				max-height: 400px;
-			}
-
-			.snapshot-button-container {
-				margin-top: 30px;
-				padding: 20px;
-				display: flex;
-				justify-content: center;
-				align-items: center;
-			}
-
-			.snapshot-button {
-				background: var(--interactive-accent);
-				color: var(--text-on-accent);
-				border: none;
-				border-radius: 8px;
-				padding: 12px 24px;
-				font-size: 16px;
-				font-weight: 600;
-				cursor: pointer;
-				transition: all 0.2s ease;
-				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-			}
-
-			.snapshot-button:hover {
-				background: var(--interactive-accent-hover);
-				box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-				transform: translateY(-1px);
-			}
-
-			.snapshot-button:active {
-				transform: translateY(0);
-				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-			}
-
-			/* Transaction Table Styles */
-			.transaction-table-section {
-				margin-top: 30px;
-				margin-bottom: 30px; /* Added spacing below table */
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.transaction-table-section h3 {
-				margin: 0 0 16px 0;
-				font-size: 16px;
-				color: var(--text-muted);
-				text-transform: uppercase;
-				letter-spacing: 1px;
-				text-align: center;
-			}
-
-			.transaction-table-scroll-container {
-				overflow-x: auto;
-			}
-
-			.transaction-table {
-				width: 100%;
-				border-collapse: collapse;
-				font-family: var(--font-interface);
-				font-size: 14px;
-			}
-
-			.transaction-table th {
-				background: var(--background-secondary);
-				color: var(--text-normal);
-				padding: 12px;
-				text-align: left;
-				font-weight: 600;
-				border: 1px solid var(--background-modifier-border);
-				position: sticky;
-				top: 0;
-				z-index: 10;
-			}
-
-			.transaction-table td {
-				padding: 10px 12px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.transaction-table th:nth-child(1),
-			.transaction-table td:nth-child(1) {
-				width: 100px;
-				max-width: 100px;
-			}
-
-			.transaction-table th:nth-child(2),
-			.transaction-table td:nth-child(2) {
-				width: 120px;
-				max-width: 120px;
-				overflow: hidden;
-				text-overflow: ellipsis;
-				white-space: nowrap;
-			}
-
-			.transaction-table th:nth-child(3),
-			.transaction-table td:nth-child(3) {
-				max-width: 150px;
-				overflow: hidden;
-				text-overflow: ellipsis;
-			}
-
-			.transaction-table th:nth-child(4),
-			.transaction-table td:nth-child(4) {
-				width: 50px;
-				max-width: 50px;
-				text-align: center;
-			}
-
-			.transaction-table tr:hover {
-				background: var(--background-modifier-hover);
-			}
-
-			.summary-row {
-				background: var(--background-secondary-alt);
-				font-weight: 600;
-				/* Remove sticky positioning if within dashboard scroll */
-			}
-
-			.summary-label {
-				font-weight: 700;
-				color: var(--text-accent);
-			}
-
-			.summary-value {
-				font-family: var(--font-monospace);
-				font-weight: 700;
-			}
-
-			.file-link {
-				color: var(--text-accent);
-				cursor: pointer;
-				text-decoration: none;
-			}
-
-			.file-link:hover {
-				text-decoration: underline;
-			}
-
-			.validation-cell {
-				text-align: center;
-				font-size: 18px;
-				font-weight: 700;
-			}
-
-			.validation-cell.valid {
-				color: #10b981;
-			}
-
-			.validation-cell.invalid {
-				color: #ef4444;
-			}
-
-			.validation-cell.warning {
-				color: #f59e0b;
-			}
-
-			.transaction-table th,
-			.transaction-table td {
-				min-width: 150px;
-				max-width: 200px;
-				word-wrap: break-word;
-			}
-		`;
-		document.head.appendChild(style);
-	}
 }
 
