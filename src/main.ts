@@ -335,15 +335,15 @@ export class FinanceDashboardView extends BasesView {
 
 		// Compact Net Worth Card
 		const netWorthCard = topRow.createDiv('compact-net-worth-card');
-		netWorthCard.createEl('h3', { text: 'Net Worth' });
-		const amount = netWorthCard.createDiv('compact-net-worth-amount');
-		amount.textContent = formatCurrency(netWorth, this.plugin.settings.currencySymbol);
-		amount.className = netWorth >= 0 ? 'positive' : 'negative';
 
-		// Actions Block
-		const actionsBlock = topRow.createDiv('actions-block');
-		actionsBlock.createEl('h3', { text: 'Actions' });
-		const actionsContainer = actionsBlock.createDiv('actions-container');
+		// Left column: Net Worth Info
+		const infoContainer = netWorthCard.createDiv('net-worth-info');
+		infoContainer.createEl('h3', { text: 'NET WORTH' });
+		const amount = infoContainer.createDiv('compact-net-worth-amount');
+		amount.textContent = formatCurrency(netWorth, this.plugin.settings.currencySymbol);
+
+		// Right column: Actions
+		const actionsContainer = netWorthCard.createDiv('net-worth-actions');
 
 		// Snapshot button
 		const snapshotBtn = actionsContainer.createEl('button', {
@@ -360,12 +360,6 @@ export class FinanceDashboardView extends BasesView {
 			cls: 'action-button action-placeholder'
 		});
 		placeholder1.disabled = true;
-
-		const placeholder2 = actionsContainer.createEl('button', {
-			text: 'Action 3',
-			cls: 'action-button action-placeholder'
-		});
-		placeholder2.disabled = true;
 	}
 
 	private createAccountBreakdown(categories: AccountCategory): void {
@@ -819,66 +813,52 @@ export class FinanceDashboardView extends BasesView {
 				border: 1px solid var(--background-modifier-border);
 			}
 
-			/* Top Row: Net Worth + Actions */
+			/* Top Row: Net Worth + Actions merged */
 			.dashboard-top-row {
-				display: grid;
-				grid-template-columns: 1fr 2fr;
-				gap: 20px;
+				display: block;
 				margin-bottom: 20px;
 			}
 
 			.compact-net-worth-card {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				border: 1px solid var(--background-modifier-border);
+				background: linear-gradient(135deg, var(--background-secondary) 0%, var(--background-primary-alt) 100%);
+				border-radius: 16px;
+				padding: 24px 32px;
+				border: 2px solid var(--background-modifier-border);
+				box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
 				display: flex;
-				flex-direction: column;
-				justify-content: center;
+				justify-content: space-between;
 				align-items: center;
 			}
 
+			.net-worth-info {
+				display: flex;
+				flex-direction: column;
+				justify-content: center;
+			}
+
 			.compact-net-worth-card h3 {
-				margin: 0 0 12px 0;
-				font-size: 14px;
+				margin: 0 0 8px 0;
+				font-size: 11px;
 				color: var(--text-muted);
+				font-weight: 700;
 				text-transform: uppercase;
-				letter-spacing: 1px;
+				letter-spacing: 1.5px;
 			}
 
 			.compact-net-worth-amount {
 				font-size: 48px;
-				font-weight: 700;
+				font-weight: 800;
 				font-family: var(--font-monospace);
+				color: #8b5cf6;
+				text-shadow: 0 2px 12px rgba(139, 92, 246, 0.3);
+				margin: 0;
 			}
 
-			.compact-net-worth-amount.positive {
-				color: #10b981;
-			}
-
-			.compact-net-worth-amount.negative {
-				color: #ef4444;
-			}
-
-			.actions-block {
-				background: var(--background-secondary);
-				border-radius: 12px;
-				padding: 20px;
-				border: 1px solid var(--background-modifier-border);
-			}
-
-			.actions-block h3 {
-				margin: 0 0 16px 0;
-				font-size: 14px;
-				color: var(--text-muted);
-				text-transform: uppercase;
-				letter-spacing: 1px;
-			}
-
-			.actions-container {
+			.net-worth-actions {
 				display: flex;
+				flex-direction: column;
 				gap: 12px;
-				flex-wrap: wrap;
+				min-width: 200px;
 			}
 
 			.action-button {
@@ -886,13 +866,14 @@ export class FinanceDashboardView extends BasesView {
 				color: var(--text-on-accent);
 				border: none;
 				border-radius: 8px;
-				padding: 10px 20px;
-				font-size: 14px;
+				padding: 12px 24px;
+				font-size: 13px;
 				font-weight: 600;
 				cursor: pointer;
 				transition: all 0.2s ease;
-				flex: 1;
-				min-width: 120px;
+				text-align: center;
+				display: block;
+				width: 100%;
 			}
 
 			.action-button:hover:not(:disabled) {
