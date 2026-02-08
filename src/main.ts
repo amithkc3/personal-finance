@@ -38,15 +38,6 @@ export default class PersonalFinancePlugin extends Plugin {
 			options: () => ([]),
 		});
 
-		// @ts-ignore
-		this.registerBasesView('transaction-table', {
-			name: 'Transaction Table',
-			icon: 'lucide-table',
-			factory: (controller: any, containerEl: HTMLElement) => {
-				return new TransactionTableView(controller, containerEl, this) as any
-			},
-			options: () => ([]),
-		});
 
 		// Add commands
 		this.addCommand({
@@ -386,18 +377,24 @@ export class FinanceDashboardView extends BasesView {
 		const totalExpenses = Array.from(categories.expenses.values()).reduce((a, b) => a + b, 0);
 		const netWorth = totalAssets + totalLiabilities; // liabilities are negative
 
+		// Calculate invalid transactions count
+		const invalidCount = this.countInvalidTransactions();
+
 		// Create dashboard components in new layout order
 		// Row 1: Compact Net Worth + Actions
-		this.createTopRow(netWorth, categories);
+		this.createTopRow(netWorth, categories, invalidCount);
 
 		// Row 2: Net Worth Line Chart (full width)
 		this.createNetWorthChart();
 
 		// Row 3 & 4: Category blocks with integrated pie charts
 		this.createCategoryBlocks(categories);
+
+		// Row 5: Transaction Table
+		this.createTransactionTable();
 	}
 
-	private createTopRow(netWorth: number, categories: AccountCategory): void {
+	private createTopRow(netWorth: number, categories: AccountCategory, invalidCount: number): void {
 		const topRow = this.containerEl.createDiv('dashboard-top-row');
 
 		// Compact Net Worth Card
@@ -430,12 +427,62 @@ export class FinanceDashboardView extends BasesView {
 			await this.logTransaction();
 		});
 
-		// Placeholder for future action
-		const placeholder1 = actionsContainer.createEl('button', {
-			text: 'Action 3',
-			cls: 'action-button action-placeholder'
+		// Validation button (Action 3)
+		const validationBtn = actionsContainer.createEl('button', {
+			cls: 'action-button'
 		});
-		placeholder1.disabled = true;
+
+		if (invalidCount > 0) {
+			validationBtn.textContent = `${invalidCount} Invalid Transactions`;
+			validationBtn.addClass('invalid-transactions-btn');
+			// Add warning style via JS or class if needed, assuming CSS handles generic button
+			validationBtn.style.backgroundColor = '#ef4444'; // Red
+			validationBtn.style.color = 'white';
+
+			validationBtn.addEventListener('click', () => {
+				new Notice(`Please check the ${invalidCount} invalid transactions in the table below.\nEnsure the sum of all accounts in each transaction is 0.`);
+			});
+		} else {
+			validationBtn.textContent = '✓ All recent transactions valid';
+			validationBtn.addClass('valid-transactions-btn');
+			validationBtn.style.backgroundColor = '#10b981'; // Green
+			validationBtn.style.color = 'white';
+			// Optional: Make it clickable to confirm validity
+			validationBtn.addEventListener('click', () => {
+				new Notice('All processed transactions are valid!');
+			});
+		}
+	}
+
+	private validateTransaction(entry: any, accountProps: string[]): boolean {
+		let sum = 0;
+
+		for (const prop of accountProps) {
+			// @ts-ignore
+			const value = entry.getValue(prop);
+			// @ts-ignore
+			if (value && value.data && typeof value.data === 'number') {
+				// @ts-ignore
+				sum += value.data;
+			}
+		}
+
+		// Allow small floating point tolerance
+		return Math.abs(sum) < 0.01;
+	}
+
+	private hasCommodity(entry: any, accountProps: string[]): boolean {
+		for (const prop of accountProps) {
+			// @ts-ignore
+			const { name } = parsePropertyId(prop);
+			if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+				// @ts-ignore
+				const value = entry.getValue(prop);
+				// @ts-ignore
+				if (value && value.data) return true;
+			}
+		}
+		return false;
 	}
 
 	private async logTransaction(): Promise<void> {
@@ -779,6 +826,260 @@ export class FinanceDashboardView extends BasesView {
 				});
 			}
 		});
+	}
+
+	private getAccountProperties(): string[] {
+		// @ts-ignore
+		const propertiesToShow = this.allProperties || this.config.getOrder();
+		if (!propertiesToShow) return [];
+
+		const accountProps: string[] = [];
+
+		for (const prop of propertiesToShow) {
+			// @ts-ignore
+			const { type, name } = parsePropertyId(prop);
+			if (type !== 'note') continue;
+
+			if (isAccountProperty(name)) {
+				accountProps.push(prop);
+			}
+		}
+
+		return sortProperties(accountProps);
+	}
+
+	private countInvalidTransactions(): number {
+		const accountProps = this.getAccountProperties();
+		// @ts-ignore
+		const entries = this.data.data || [];
+		let invalidCount = 0;
+
+		for (const entry of entries) {
+			// Skip commodities
+			if (this.hasCommodity(entry, accountProps)) continue;
+
+			// Check validity
+			if (!this.validateTransaction(entry, accountProps)) {
+				invalidCount++;
+			}
+		}
+
+		return invalidCount;
+	}
+
+	private createTransactionTable(): void {
+		const tableContainer = this.containerEl.createDiv('transaction-table-section');
+		tableContainer.createEl('h3', { text: 'Recent Transactions' });
+
+		const propertiesToShow = this.allProperties || this.config.getOrder();
+		if (!propertiesToShow) {
+			tableContainer.createDiv({ text: 'No properties configured.' });
+			return;
+		}
+
+		// Categorize properties
+		let accountProps: string[] = [];
+		const otherProps: { date?: string; comment?: string } = {};
+
+		for (const prop of propertiesToShow) {
+			// @ts-ignore
+			const { type, name } = parsePropertyId(prop);
+			if (type !== 'note') continue;
+
+			if (isAccountProperty(name)) {
+				accountProps.push(prop);
+			} else if (name.toLowerCase() === 'date') {
+				otherProps.date = prop;
+			} else if (name.toLowerCase() === 'comment') {
+				otherProps.comment = prop;
+			}
+		}
+
+		// Sort account properties by category order
+		accountProps = sortProperties(accountProps);
+
+		// Create table container for horizontal scrolling if needed
+		const scrollContainer = tableContainer.createDiv('transaction-table-scroll-container');
+		const table = scrollContainer.createEl('table', { cls: 'transaction-table' });
+		const thead = table.createEl('thead');
+		const tbody = table.createEl('tbody');
+
+		// Create header row
+		const headerRow = thead.createEl('tr');
+		headerRow.createEl('th', { text: 'Date' });
+		headerRow.createEl('th', { text: 'File' });
+		if (otherProps.comment) {
+			headerRow.createEl('th', { text: 'Comment' });
+		}
+		headerRow.createEl('th', { text: 'Valid' });
+
+		for (const prop of accountProps) {
+			// @ts-ignore
+			const { name } = parsePropertyId(prop);
+			const th = headerRow.createEl('th', { text: name });
+
+			// Add color class based on category
+			if (name.startsWith(ACCOUNT_PREFIXES.ASSET)) {
+				th.addClass('col-asset');
+			} else if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+				th.addClass('col-commodity');
+			} else if (name.startsWith(ACCOUNT_PREFIXES.LIABILITY)) {
+				th.addClass('col-liability');
+			} else if (name.startsWith(ACCOUNT_PREFIXES.EXPENSE)) {
+				th.addClass('col-expense');
+			} else if (name.startsWith(ACCOUNT_PREFIXES.INCOME)) {
+				th.addClass('col-income');
+			}
+		}
+
+		// Create summary row
+		const summaryRow = tbody.createEl('tr', { cls: 'summary-row' });
+		summaryRow.createEl('td', { text: 'TOTALS', cls: 'summary-label' });
+		summaryRow.createEl('td', { text: '' });
+		if (otherProps.comment) {
+			summaryRow.createEl('td', { text: '' });
+		}
+		summaryRow.createEl('td', { text: '' });
+
+		for (const prop of accountProps) {
+			// @ts-ignore
+			const { name } = parsePropertyId(prop);
+			// @ts-ignore
+			const summaryValue = this.data.getSummaryValue(this.controller, this.data.data, prop, 'Sum');
+			const td = summaryRow.createEl('td', { cls: 'summary-value' });
+			// @ts-ignore
+			if (summaryValue && summaryValue.data && typeof summaryValue.data === 'number') {
+				// Show raw quantity for commodities, currency for others
+				if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+					// @ts-ignore
+					td.textContent = summaryValue.data.toFixed(2);
+				} else {
+					// @ts-ignore
+					td.textContent = formatCurrency(summaryValue.data, this.plugin.settings.currencySymbol);
+				}
+			} else {
+				td.textContent = '-';
+			}
+		}
+
+
+		// Create data rows (limit based on settings)
+		const entries = this.data.data || [];
+
+		// Sort by validity (invalid first) then by file modified time descending
+		entries.sort((a: any, b: any) => {
+			// Check validity (excluding commodities)
+			const accountProps = this.getAccountProperties();
+
+			const isACommodity = this.hasCommodity(a, accountProps);
+			const isBCommodity = this.hasCommodity(b, accountProps);
+
+			const isAValid = isACommodity || this.validateTransaction(a, accountProps);
+			const isBValid = isBCommodity || this.validateTransaction(b, accountProps);
+
+			// If one is invalid and other is valid, invalid comes first
+			if (isAValid !== isBValid) {
+				return isAValid ? 1 : -1;
+			}
+
+			// Secondary sort: file modified time descending
+			// @ts-ignore
+			const timeA = a.file?.stat?.mtime || 0;
+			// @ts-ignore
+			const timeB = b.file?.stat?.mtime || 0;
+			return timeB - timeA;
+		});
+
+		const entriesToDisplay = entries.slice(0, this.plugin.settings.tableRowsToShow);
+		for (const entry of entriesToDisplay) {
+			const row = tbody.createEl('tr');
+
+			// Date column
+			const dateCell = row.createEl('td');
+			if (otherProps.date) {
+				// @ts-ignore
+				const dateValue = entry.getValue(otherProps.date);
+				// @ts-ignore
+				if (dateValue && dateValue.date) {
+					// @ts-ignore
+					dateCell.textContent = dateValue.date.toLocaleString();
+				}
+			}
+
+			// File column
+			const fileCell = row.createEl('td');
+			const fileLink = fileCell.createEl('a', {
+				text: entry.file.basename,
+				cls: 'file-link'
+			});
+			fileLink.addEventListener('click', (e) => {
+				e.preventDefault();
+				// @ts-ignore
+				this.app.workspace.openLinkText(entry.file.path, '', false);
+			});
+
+			// Comment column
+			if (otherProps.comment) {
+				const commentCell = row.createEl('td');
+				// @ts-ignore
+				const commentValue = entry.getValue(otherProps.comment);
+				// @ts-ignore
+				if (commentValue && commentValue.data) {
+					// @ts-ignore
+					const text = commentValue.data.toString();
+					commentCell.textContent = text.length > 50 ? text.substring(0, 50) + '...' : text;
+				}
+			}
+
+			// Validation column
+			const validCell = row.createEl('td', { cls: 'validation-cell' });
+			const hasCommodity = this.hasCommodity(entry, accountProps);
+
+			if (hasCommodity) {
+				validCell.textContent = '⚠';
+				validCell.addClass('warning');
+			} else {
+				const isValid = this.validateTransaction(entry, accountProps);
+				validCell.textContent = isValid ? '✓' : '✗';
+				validCell.addClass(isValid ? 'valid' : 'invalid');
+			}
+
+			// Account columns
+			for (const prop of accountProps) {
+				const cell = row.createEl('td');
+				// @ts-ignore
+				const { name } = parsePropertyId(prop);
+
+				// Add color class based on category
+				if (name.startsWith(ACCOUNT_PREFIXES.ASSET)) {
+					cell.addClass('col-asset');
+				} else if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+					cell.addClass('col-commodity');
+				} else if (name.startsWith(ACCOUNT_PREFIXES.LIABILITY)) {
+					cell.addClass('col-liability');
+				} else if (name.startsWith(ACCOUNT_PREFIXES.EXPENSE)) {
+					cell.addClass('col-expense');
+				} else if (name.startsWith(ACCOUNT_PREFIXES.INCOME)) {
+					cell.addClass('col-income');
+				}
+
+				// @ts-ignore
+				const value = entry.getValue(prop);
+				// @ts-ignore
+				if (value && value.data && typeof value.data === 'number') {
+					// Show raw quantity for commodities, currency for others
+					if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						// @ts-ignore
+						cell.textContent = value.data.toFixed(2);
+					} else {
+						// @ts-ignore
+						cell.textContent = formatCurrency(value.data, this.plugin.settings.currencySymbol);
+					}
+				} else {
+					cell.textContent = '-';
+				}
+			}
+		}
 	}
 
 	private createSnapshotButton(categories: AccountCategory): void {
@@ -1262,6 +1563,27 @@ export class FinanceDashboardView extends BasesView {
 				padding: 10px 8px;
 			}
 
+			/* Generic Column Colors for Table */
+			.col-asset {
+				background-color: rgba(16, 185, 129, 0.05);
+			}
+			
+			.col-commodity {
+				background-color: rgba(59, 130, 246, 0.05);
+			}
+			
+			.col-liability {
+				background-color: rgba(251, 191, 36, 0.05);
+			}
+			
+			.col-income {
+				background-color: rgba(16, 185, 129, 0.05);
+			}
+			
+			.col-expense {
+				background-color: rgba(239, 68, 68, 0.05);
+			}
+
 			.commodity-formula {
 				font-size: 11px;
 				color: var(--text-muted);
@@ -1348,257 +1670,26 @@ export class FinanceDashboardView extends BasesView {
 				transform: translateY(0);
 				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 			}
-		`;
-		document.head.appendChild(style);
-	}
-}
 
-// @ts-ignore
-export class TransactionTableView extends BasesView {
-	readonly type = 'transaction-table';
-	private containerEl: HTMLElement;
-	// @ts-ignore
-	public app: App;
-	public config: any;
-	public data: any;
-	private controller: any;
-	private plugin: PersonalFinancePlugin;
-
-	constructor(controller: any, parentEl: HTMLElement, plugin: PersonalFinancePlugin) {
-		super(controller);
-		this.controller = controller;
-		this.plugin = plugin;
-		this.containerEl = parentEl.createDiv('transaction-table-container');
-	}
-
-	private validateTransaction(entry: any, accountProps: string[]): boolean {
-		let sum = 0;
-
-		for (const prop of accountProps) {
-			// @ts-ignore
-			const value = entry.getValue(prop);
-			// @ts-ignore
-			if (value && value.data && typeof value.data === 'number') {
-				// @ts-ignore
-				sum += value.data;
-			}
-		}
-
-		// Allow small floating point tolerance
-		return Math.abs(sum) < 0.01;
-	}
-
-	private hasCommodity(entry: any, accountProps: string[]): boolean {
-		for (const prop of accountProps) {
-			// @ts-ignore
-			const { name } = parsePropertyId(prop);
-			if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-				// @ts-ignore
-				const value = entry.getValue(prop);
-				// @ts-ignore
-				if (value && value.data) return true;
-			}
-		}
-		return false;
-	}
-
-	public onDataUpdated(): void {
-		this.containerEl.empty();
-		this.addStyles();
-
-		const propertiesToShow = this.allProperties || this.config.getOrder();
-		if (!propertiesToShow) {
-			this.containerEl.createDiv({ text: 'No properties configured.' });
-			return;
-		}
-
-		// Categorize properties
-		let accountProps: string[] = [];
-		const otherProps: { date?: string; comment?: string } = {};
-
-		for (const prop of propertiesToShow) {
-			// @ts-ignore
-			const { type, name } = parsePropertyId(prop);
-			if (type !== 'note') continue;
-
-			if (isAccountProperty(name)) {
-				accountProps.push(prop);
-			} else if (name.toLowerCase() === 'date') {
-				otherProps.date = prop;
-			} else if (name.toLowerCase() === 'comment') {
-				otherProps.comment = prop;
-			}
-		}
-
-		// Sort account properties by category order
-		accountProps = sortProperties(accountProps);
-
-		// Create table
-		const table = this.containerEl.createEl('table', { cls: 'transaction-table' });
-		const thead = table.createEl('thead');
-		const tbody = table.createEl('tbody');
-
-		// Create header row
-		const headerRow = thead.createEl('tr');
-		headerRow.createEl('th', { text: 'Date' });
-		headerRow.createEl('th', { text: 'File' });
-		if (otherProps.comment) {
-			headerRow.createEl('th', { text: 'Comment' });
-		}
-		headerRow.createEl('th', { text: 'Valid' });
-
-		for (const prop of accountProps) {
-			// @ts-ignore
-			const { name } = parsePropertyId(prop);
-			const th = headerRow.createEl('th', { text: name });
-
-			// Add color class based on category
-			if (name.startsWith(ACCOUNT_PREFIXES.ASSET)) {
-				th.addClass('col-asset');
-			} else if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-				th.addClass('col-commodity');
-			} else if (name.startsWith(ACCOUNT_PREFIXES.LIABILITY)) {
-				th.addClass('col-liability');
-			} else if (name.startsWith(ACCOUNT_PREFIXES.EXPENSE)) {
-				th.addClass('col-expense');
-			} else if (name.startsWith(ACCOUNT_PREFIXES.INCOME)) {
-				th.addClass('col-income');
-			}
-		}
-
-		// Create summary row
-		const summaryRow = tbody.createEl('tr', { cls: 'summary-row' });
-		summaryRow.createEl('td', { text: 'TOTALS', cls: 'summary-label' });
-		summaryRow.createEl('td', { text: '' });
-		if (otherProps.comment) {
-			summaryRow.createEl('td', { text: '' });
-		}
-		summaryRow.createEl('td', { text: '' });
-
-		for (const prop of accountProps) {
-			// @ts-ignore
-			const { name } = parsePropertyId(prop);
-			// @ts-ignore
-			const summaryValue = this.data.getSummaryValue(this.controller, this.data.data, prop, 'Sum');
-			const td = summaryRow.createEl('td', { cls: 'summary-value' });
-			// @ts-ignore
-			if (summaryValue && summaryValue.data && typeof summaryValue.data === 'number') {
-				// Show raw quantity for commodities, currency for others
-				if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-					// @ts-ignore
-					td.textContent = summaryValue.data.toFixed(2);
-				} else {
-					// @ts-ignore
-					td.textContent = formatCurrency(summaryValue.data, this.plugin.settings.currencySymbol);
-				}
-			} else {
-				td.textContent = '-';
-			}
-		}
-
-		// Create data rows (limit based on settings)
-		const entries = this.data.data || [];
-		const entriesToDisplay = entries.slice(0, this.plugin.settings.tableRowsToShow);
-		for (const entry of entriesToDisplay) {
-			const row = tbody.createEl('tr');
-
-			// Date column
-			const dateCell = row.createEl('td');
-			if (otherProps.date) {
-				// @ts-ignore
-				const dateValue = entry.getValue(otherProps.date);
-				// @ts-ignore
-				if (dateValue && dateValue.date) {
-					// @ts-ignore
-					dateCell.textContent = dateValue.date.toLocaleString();
-				}
-			}
-
-			// File column
-			const fileCell = row.createEl('td');
-			const fileLink = fileCell.createEl('a', {
-				text: entry.file.basename,
-				cls: 'file-link'
-			});
-			fileLink.addEventListener('click', (e) => {
-				e.preventDefault();
-				// @ts-ignore
-				this.app.workspace.openLinkText(entry.file.path, '', false);
-			});
-
-			// Comment column
-			if (otherProps.comment) {
-				const commentCell = row.createEl('td');
-				// @ts-ignore
-				const commentValue = entry.getValue(otherProps.comment);
-				// @ts-ignore
-				if (commentValue && commentValue.data) {
-					// @ts-ignore
-					const text = commentValue.data.toString();
-					commentCell.textContent = text.length > 50 ? text.substring(0, 50) + '...' : text;
-				}
-			}
-
-			// Validation column
-			const validCell = row.createEl('td', { cls: 'validation-cell' });
-			const hasCommodity = this.hasCommodity(entry, accountProps);
-
-			if (hasCommodity) {
-				validCell.textContent = '⚠';
-				validCell.addClass('warning');
-			} else {
-				const isValid = this.validateTransaction(entry, accountProps);
-				validCell.textContent = isValid ? '✓' : '✗';
-				validCell.addClass(isValid ? 'valid' : 'invalid');
-			}
-
-			// Account columns
-			for (const prop of accountProps) {
-				const cell = row.createEl('td');
-				// @ts-ignore
-				const { name } = parsePropertyId(prop);
-
-				// Add color class based on category
-				if (name.startsWith(ACCOUNT_PREFIXES.ASSET)) {
-					cell.addClass('col-asset');
-				} else if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-					cell.addClass('col-commodity');
-				} else if (name.startsWith(ACCOUNT_PREFIXES.LIABILITY)) {
-					cell.addClass('col-liability');
-				} else if (name.startsWith(ACCOUNT_PREFIXES.EXPENSE)) {
-					cell.addClass('col-expense');
-				} else if (name.startsWith(ACCOUNT_PREFIXES.INCOME)) {
-					cell.addClass('col-income');
-				}
-
-				// @ts-ignore
-				const value = entry.getValue(prop);
-				// @ts-ignore
-				if (value && value.data && typeof value.data === 'number') {
-					// Show raw quantity for commodities, currency for others
-					if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-						// @ts-ignore
-						cell.textContent = value.data.toFixed(2);
-					} else {
-						// @ts-ignore
-						cell.textContent = formatCurrency(value.data, this.plugin.settings.currencySymbol);
-					}
-				} else {
-					cell.textContent = '-';
-				}
-			}
-		}
-	}
-
-	private addStyles(): void {
-		const styleEl = document.getElementById('transaction-table-styles');
-		if (styleEl) return;
-
-		const style = document.createElement('style');
-		style.id = 'transaction-table-styles';
-		style.textContent = `
-			.transaction-table-container {
+			/* Transaction Table Styles */
+			.transaction-table-section {
+				margin-top: 30px;
+				background: var(--background-secondary);
+				border-radius: 12px;
 				padding: 20px;
+				border: 1px solid var(--background-modifier-border);
+			}
+
+			.transaction-table-section h3 {
+				margin: 0 0 16px 0;
+				font-size: 16px;
+				color: var(--text-muted);
+				text-transform: uppercase;
+				letter-spacing: 1px;
+				text-align: center;
+			}
+
+			.transaction-table-scroll-container {
 				overflow-x: auto;
 			}
 
@@ -1662,9 +1753,7 @@ export class TransactionTableView extends BasesView {
 			.summary-row {
 				background: var(--background-secondary-alt);
 				font-weight: 600;
-				position: sticky;
-				top: 45px;
-				z-index: 9;
+				/* Remove sticky positioning if within dashboard scroll */
 			}
 
 			.summary-label {
@@ -1705,33 +1794,14 @@ export class TransactionTableView extends BasesView {
 				color: #f59e0b;
 			}
 
-		.transaction-table th,
-		.transaction-table td {
-			min-width: 150px;
-			max-width: 200px;
-			word-wrap: break-word;
-		}
-
-		.col-asset {
-			background-color: rgba(16, 185, 129, 0.1);
-		}
-
-		.col-commodity {
-			background-color: rgba(59, 130, 246, 0.1);
-		}
-
-		.col-liability {
-			background-color: rgba(251, 191, 36, 0.1);
-		}
-
-		.col-expense {
-			background-color: rgba(239, 68, 68, 0.1);
-		}
-
-		.col-income {
-			background-color: rgba(16, 185, 129, 0.1);
-		}
-	`;
+			.transaction-table th,
+			.transaction-table td {
+				min-width: 150px;
+				max-width: 200px;
+				word-wrap: break-word;
+			}
+		`;
 		document.head.appendChild(style);
 	}
 }
+
