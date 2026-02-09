@@ -687,7 +687,9 @@ export class FinanceDashboardView extends BasesView {
 			cls: 'refresh-button-small'
 		});
 		// Recycle icon (using text for now, could use setIcon if available)
-		refreshBtn.innerHTML = '<span class="refresh-icon">↻</span> Refresh';
+		const refreshIcon = refreshBtn.createSpan({ cls: 'refresh-icon' });
+		refreshIcon.textContent = '↻';
+		refreshBtn.createSpan({ text: ' Refresh' });
 		refreshBtn.addEventListener('click', async (e) => {
 			e.stopPropagation();
 			await this.refreshDashboardData(true);
@@ -716,7 +718,9 @@ export class FinanceDashboardView extends BasesView {
 		const logTransactionBtn = actionsContainer.createEl('button', {
 			cls: 'action-button action-button-large'
 		});
-		logTransactionBtn.innerHTML = '<span class="action-icon">+</span> Log Transaction';
+		const logIcon = logTransactionBtn.createSpan({ cls: 'action-icon' });
+		logIcon.textContent = '+';
+		logTransactionBtn.createSpan({ text: ' Log Transaction' });
 		logTransactionBtn.addEventListener('click', async () => {
 			await this.logTransaction();
 		});
@@ -1341,7 +1345,9 @@ export class FinanceDashboardView extends BasesView {
 		const validateBtn = headerContainer.createEl('button', {
 			cls: 'validate-button-small'
 		});
-		validateBtn.innerHTML = '<span class="validate-icon">✓</span> Validate Transactions';
+		const validateIcon = validateBtn.createSpan({ cls: 'validate-icon' });
+		validateIcon.textContent = '✓';
+		validateBtn.createSpan({ text: ' Validate Transactions' });
 		validateBtn.addEventListener('click', () => {
 			new ValidateTransactionsModal(this.app, this).open();
 		});
@@ -1699,7 +1705,9 @@ export class FinanceDashboardView extends BasesView {
 		const snapshotBtn = headerContainer.createEl('button', {
 			cls: 'snapshot-button-small'
 		});
-		snapshotBtn.innerHTML = '<span class="snapshot-icon">+</span> Add Snapshot';
+		const snapshotIcon = snapshotBtn.createSpan({ cls: 'snapshot-icon' });
+		snapshotIcon.textContent = '+';
+		snapshotBtn.createSpan({ text: ' Add Snapshot' });
 		snapshotBtn.addEventListener('click', async () => {
 			// categorizesAccounts returns AccountCategory which is what createSnapshot expects
 			await this.createSnapshot(this.categorizeAccounts());
