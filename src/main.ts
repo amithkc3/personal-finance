@@ -187,16 +187,7 @@ class RatesAndPricesModal extends Modal {
 		const { contentEl } = this;
 		contentEl.createEl('h2', { text: 'Update Rates & Prices' });
 
-		// 1. Currency Rate Section
-		contentEl.createEl('h3', { text: 'USD to INR Rate' });
-		const rateInput = contentEl.createEl('input', {
-			type: 'number',
-			value: this.plugin.settings.usdToInr.toString()
-		});
-		rateInput.style.width = '100%';
-		rateInput.style.marginBottom = '20px';
-
-		// 2. Commodity Prices Section
+		// 1. Commodity Prices Section (moved first)
 		contentEl.createEl('h3', { text: 'Commodity Prices' });
 		contentEl.createEl('p', { text: 'JSON format: {"QCOM": {"value": 150.50, "currency": "$"}}' });
 
@@ -205,6 +196,15 @@ class RatesAndPricesModal extends Modal {
 		pricesTextarea.style.width = '100%';
 		pricesTextarea.style.height = '150px';
 		pricesTextarea.style.marginBottom = '20px';
+
+		// 2. Currency Rate Section
+		contentEl.createEl('h3', { text: 'USD to INR Rate' });
+		const rateInput = contentEl.createEl('input', {
+			type: 'number',
+			value: this.plugin.settings.usdToInr.toString()
+		});
+		rateInput.style.width = '100%';
+		rateInput.style.marginBottom = '20px';
 
 		// Save Button
 		const button = contentEl.createEl('button', { text: 'Save All Changes', cls: 'mod-cta' });
@@ -309,9 +309,9 @@ class ValidateTransactionsModal extends Modal {
 			text: 'Choose how to validate your transactions:'
 		});
 
-		// Option 1: Validate only invalid
+		// Option 1: Validate only invalid (GREEN)
 		const option1Container = contentEl.createDiv({ cls: 'validation-option' });
-		option1Container.style.marginBottom = '20px';
+		option1Container.style.marginBottom = '15px';
 		option1Container.style.padding = '15px';
 		option1Container.style.border = '1px solid var(--background-modifier-border)';
 		option1Container.style.borderRadius = '8px';
@@ -323,32 +323,59 @@ class ValidateTransactionsModal extends Modal {
 		});
 
 		const validateInvalidBtn = option1Container.createEl('button', {
-			text: 'Validate Invalid Transactions',
-			cls: 'mod-cta'
+			text: 'Validate Invalid Transactions'
 		});
 		validateInvalidBtn.style.width = '100%';
+		validateInvalidBtn.style.backgroundColor = '#28a745';
+		validateInvalidBtn.style.color = 'white';
 		validateInvalidBtn.addEventListener('click', async () => {
 			this.close();
 			await this.dashboardView.validateAllTransactions(false);
 		});
 
-		// Option 2: Force validate all
+		// Option 2: Validate recent 50 transactions (BLUE)
 		const option2Container = contentEl.createDiv({ cls: 'validation-option' });
+		option2Container.style.marginBottom = '15px';
 		option2Container.style.padding = '15px';
 		option2Container.style.border = '1px solid var(--background-modifier-border)';
 		option2Container.style.borderRadius = '8px';
 
-		option2Container.createEl('h4', { text: 'Force Validate All' });
-		const warningText = option2Container.createEl('p', {
+		option2Container.createEl('h4', { text: 'Validate Recent 50' });
+		option2Container.createEl('p', {
+			text: 'Validates only the 50 most recently modified transaction files. Good for quick checks after recent edits.',
+			cls: 'setting-item-description'
+		});
+
+		const validateRecentBtn = option2Container.createEl('button', {
+			text: 'Validate Recent 50 Transactions'
+		});
+		validateRecentBtn.style.width = '100%';
+		validateRecentBtn.style.backgroundColor = 'var(--interactive-accent)';
+		validateRecentBtn.style.color = 'white';
+		validateRecentBtn.addEventListener('click', async () => {
+			this.close();
+			await this.dashboardView.validateRecentTransactions(50);
+		});
+
+		// Option 3: Force validate all (RED)
+		const option3Container = contentEl.createDiv({ cls: 'validation-option' });
+		option3Container.style.padding = '15px';
+		option3Container.style.border = '1px solid var(--background-modifier-border)';
+		option3Container.style.borderRadius = '8px';
+
+		option3Container.createEl('h4', { text: 'Force Validate All' });
+		const warningText = option3Container.createEl('p', {
 			text: '⚠️ Re-validates ALL transactions, even those already marked valid. This is an expensive operation that reads and modifies every transaction file.',
 			cls: 'setting-item-description'
 		});
 		warningText.style.color = 'var(--text-warning)';
 
-		const forceValidateBtn = option2Container.createEl('button', {
+		const forceValidateBtn = option3Container.createEl('button', {
 			text: 'Force Validate All Transactions'
 		});
 		forceValidateBtn.style.width = '100%';
+		forceValidateBtn.style.backgroundColor = 'var(--text-error)';
+		forceValidateBtn.style.color = 'white';
 		forceValidateBtn.addEventListener('click', async () => {
 			this.close();
 			await this.dashboardView.validateAllTransactions(true);
@@ -368,6 +395,20 @@ interface AccountCategory {
 	liabilities: Map<string, number>;
 	income: Map<string, number>;
 	expenses: Map<string, number>;
+}
+
+interface DashboardCache {
+	lastUpdated: string;
+	maxFileMtime: number;
+	fileCount: number;
+	sums: Record<string, number>;
+	categories: {
+		assets: Record<string, number>;
+		liabilities: Record<string, number>;
+		income: Record<string, number>;
+		expenses: Record<string, number>;
+	};
+	netWorth: number;
 }
 
 function categorizeProperty(name: string): keyof AccountCategory | null {
@@ -416,12 +457,118 @@ export class FinanceDashboardView extends BasesView {
 	public data: any;
 	private controller: any;
 	private plugin: PersonalFinancePlugin;
+	private cachedData: DashboardCache | null = null;
 
 	constructor(controller: any, parentEl: HTMLElement, plugin: PersonalFinancePlugin) {
 		super(controller);
 		this.controller = controller;
 		this.plugin = plugin;
 		this.containerEl = parentEl.createDiv('bases-finance-dashboard');
+	}
+
+	private async getMaxFileMtime(): Promise<{ maxMtime: number; fileCount: number }> {
+		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
+		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
+
+		if (!(folder instanceof TFolder)) {
+			return { maxMtime: 0, fileCount: 0 };
+		}
+
+		const files = folder.children.filter((f) => f instanceof TFile && f.extension === 'md') as TFile[];
+		let maxMtime = 0;
+		for (const file of files) {
+			if (file.stat.mtime > maxMtime) {
+				maxMtime = file.stat.mtime;
+			}
+		}
+		return { maxMtime, fileCount: files.length };
+	}
+
+	private async loadCache(): Promise<DashboardCache | null> {
+		const cachePath = this.plugin.settings.dashboardDataPath;
+		try {
+			if (await this.plugin.app.vault.adapter.exists(cachePath)) {
+				const content = await this.plugin.app.vault.adapter.read(cachePath);
+				return JSON.parse(content) as DashboardCache;
+			}
+		} catch (e) {
+			console.error('Error loading dashboard cache, will recalculate:', e);
+			new Notice('Dashboard cache corrupted, recalculating...');
+		}
+		return null;
+	}
+
+	private async saveCache(cache: DashboardCache): Promise<void> {
+		const cachePath = this.plugin.settings.dashboardDataPath;
+		try {
+			await this.plugin.app.vault.adapter.write(cachePath, JSON.stringify(cache, null, 2));
+		} catch (e) {
+			console.error('Error saving dashboard cache:', e);
+		}
+	}
+
+	private categoriesToCache(categories: AccountCategory): DashboardCache['categories'] {
+		return {
+			assets: Object.fromEntries(categories.assets),
+			liabilities: Object.fromEntries(categories.liabilities),
+			income: Object.fromEntries(categories.income),
+			expenses: Object.fromEntries(categories.expenses)
+		};
+	}
+
+	private cacheToCategories(cache: DashboardCache): AccountCategory {
+		return {
+			assets: new Map(Object.entries(cache.categories.assets)),
+			liabilities: new Map(Object.entries(cache.categories.liabilities)),
+			income: new Map(Object.entries(cache.categories.income)),
+			expenses: new Map(Object.entries(cache.categories.expenses))
+		};
+	}
+
+	public async refreshDashboardData(force: boolean = false): Promise<{ categories: AccountCategory; netWorth: number; lastUpdated: string }> {
+		const { maxMtime, fileCount } = await this.getMaxFileMtime();
+
+		// Try to load existing cache
+		if (!force) {
+			const existingCache = await this.loadCache();
+			if (existingCache && existingCache.maxFileMtime >= maxMtime && existingCache.fileCount === fileCount) {
+				// Cache is valid, use it
+				this.cachedData = existingCache;
+				return {
+					categories: this.cacheToCategories(existingCache),
+					netWorth: existingCache.netWorth,
+					lastUpdated: existingCache.lastUpdated
+				};
+			}
+		}
+
+		// Recalculate
+		new Notice('Refreshing dashboard data...');
+		const categories = this.categorizeAccounts();
+		const netWorth = Array.from(categories.assets.values()).reduce((a, b) => a + b, 0) +
+			Array.from(categories.liabilities.values()).reduce((a, b) => a + b, 0);
+
+		// Build cache
+		const sums: Record<string, number> = {};
+		for (const [k, v] of categories.assets) sums[k] = v;
+		for (const [k, v] of categories.liabilities) sums[k] = v;
+		for (const [k, v] of categories.income) sums[k] = v;
+		for (const [k, v] of categories.expenses) sums[k] = v;
+
+		const cache: DashboardCache = {
+			lastUpdated: new Date().toISOString(),
+			maxFileMtime: maxMtime,
+			fileCount: fileCount,
+			sums: sums,
+			categories: this.categoriesToCache(categories),
+			netWorth: netWorth
+		};
+
+		await this.saveCache(cache);
+		this.cachedData = cache;
+		new Notice('Dashboard data refreshed!');
+
+		return { categories, netWorth, lastUpdated: cache.lastUpdated };
 	}
 
 	public categorizeAccounts(): AccountCategory {
@@ -481,20 +628,34 @@ export class FinanceDashboardView extends BasesView {
 		this.containerEl.empty();
 		this.containerEl.addClass('finance-dashboard-container');
 
+		// Use cached data if available, otherwise calculate fresh
+		let categories: AccountCategory;
+		let netWorth: number;
+		let lastUpdated: string | undefined;
 
+		if (this.cachedData) {
+			categories = this.cacheToCategories(this.cachedData);
+			netWorth = this.cachedData.netWorth;
+			lastUpdated = this.cachedData.lastUpdated;
+		} else {
+			// Fallback to direct calculation (first load before cache)
+			categories = this.categorizeAccounts();
+			const totalAssets = Array.from(categories.assets.values()).reduce((a, b) => a + b, 0);
+			const totalLiabilities = Array.from(categories.liabilities.values()).reduce((a, b) => a + b, 0);
+			netWorth = totalAssets + totalLiabilities;
 
-		const categories = this.categorizeAccounts();
-
-		// Calculate totals
-		const totalAssets = Array.from(categories.assets.values()).reduce((a, b) => a + b, 0);
-		const totalLiabilities = Array.from(categories.liabilities.values()).reduce((a, b) => a + b, 0);
-		const totalIncome = Array.from(categories.income.values()).reduce((a, b) => a + b, 0);
-		const totalExpenses = Array.from(categories.expenses.values()).reduce((a, b) => a + b, 0);
-		const netWorth = totalAssets + totalLiabilities; // liabilities are negative
+			// Trigger async cache refresh in background
+			this.refreshDashboardData(false).then(data => {
+				// Update if data changed
+				if (data.netWorth !== netWorth) {
+					this.onDataUpdated();
+				}
+			});
+		}
 
 		// Create dashboard components in new layout order
 		// Row 1: Compact Net Worth + Actions
-		this.createTopRow(netWorth, categories);
+		this.createTopRow(netWorth, categories, lastUpdated);
 
 		// Row 2: Transaction Table (Moved here as requested)
 		this.createTransactionTable();
@@ -506,7 +667,7 @@ export class FinanceDashboardView extends BasesView {
 		this.createCategoryBlocks(categories);
 	}
 
-	private createTopRow(netWorth: number, categories: AccountCategory): void {
+	private createTopRow(netWorth: number, categories: AccountCategory, lastUpdated?: string): void {
 		const topRow = this.containerEl.createDiv('dashboard-top-row');
 
 		// 1. Net Worth Card (Left/Top)
@@ -517,8 +678,29 @@ export class FinanceDashboardView extends BasesView {
 		const amount = infoContainer.createDiv('compact-net-worth-amount');
 		amount.textContent = formatCurrency(netWorth, this.plugin.settings.currencySymbol);
 
+		// Last updated indicator
+		if (lastUpdated) {
+			const lastUpdatedEl = netWorthCard.createDiv('last-updated-indicator');
+			const date = new Date(lastUpdated);
+			const timeAgo = this.getTimeAgo(date);
+			lastUpdatedEl.textContent = `Last refreshed: ${timeAgo}`;
+			lastUpdatedEl.style.fontSize = '0.75rem';
+			lastUpdatedEl.style.color = 'var(--text-muted)';
+			lastUpdatedEl.style.marginTop = '4px';
+		}
+
 		// 2. Actions Block (Right/Bottom)
 		const actionsContainer = topRow.createDiv('dashboard-actions-block');
+
+		// Refresh Dashboard button
+		const refreshBtn = actionsContainer.createEl('button', {
+			text: '↻ Refresh Data',
+			cls: 'action-button'
+		});
+		refreshBtn.addEventListener('click', async () => {
+			await this.refreshDashboardData(true);
+			this.onDataUpdated();
+		});
 
 		// Snapshot button
 		const snapshotBtn = actionsContainer.createEl('button', {
@@ -555,6 +737,16 @@ export class FinanceDashboardView extends BasesView {
 		validationBtn.addEventListener('click', () => {
 			new ValidateTransactionsModal(this.app, this).open();
 		});
+	}
+
+	private getTimeAgo(date: Date): string {
+		const now = new Date();
+		const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+		if (seconds < 60) return 'just now';
+		if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+		if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+		return `${Math.floor(seconds / 86400)} days ago`;
 	}
 
 	private validateTransaction(entry: any, accountProps: string[]): boolean {
@@ -676,6 +868,90 @@ export class FinanceDashboardView extends BasesView {
 				const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
 
 				// Only update if content changed
+				if (newContent !== content) {
+					await this.plugin.app.vault.modify(file, newContent);
+				}
+
+				if (isValid) {
+					validCount++;
+				} else {
+					invalidCount++;
+				}
+			} catch (error) {
+				console.error(`Error validating ${file.path}:`, error);
+			}
+		}
+
+		new Notice(`Validation complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`);
+	}
+
+	public async validateRecentTransactions(count: number): Promise<void> {
+		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
+		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
+
+		if (!(folder instanceof TFolder)) {
+			new Notice('Transactions folder not found.');
+			return;
+		}
+
+		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
+
+		// Sort by mtime descending (most recent first)
+		allFiles.sort((a, b) => b.stat.mtime - a.stat.mtime);
+
+		// Take only the top N files
+		const filesToProcess = allFiles.slice(0, count);
+		let validCount = 0;
+		let invalidCount = 0;
+
+		new Notice(`Validating ${filesToProcess.length} recent transactions...`);
+
+		for (const file of filesToProcess) {
+			try {
+				const content = await this.plugin.app.vault.read(file);
+				const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+
+				if (!frontmatterMatch) continue;
+
+				const frontmatter = frontmatterMatch[1] || '';
+				const lines = frontmatter.split('\n');
+
+				let sum = 0;
+				let hasCommodity = false;
+				const newLines: string[] = [];
+
+				for (const line of lines) {
+					const colonIndex = line.indexOf(':');
+					if (colonIndex === -1) {
+						newLines.push(line);
+						continue;
+					}
+
+					const key = line.substring(0, colonIndex).trim();
+					const value = line.substring(colonIndex + 1).trim();
+
+					if (key === 'is_valid') continue;
+
+					if (key.startsWith('Asset-') || key.startsWith('Liability-') ||
+						key.startsWith('Expense-') || key.startsWith('Income-')) {
+						const numValue = parseFloat(value);
+						if (!isNaN(numValue)) {
+							sum += numValue;
+						}
+					} else if (key.startsWith('Commodity-')) {
+						hasCommodity = true;
+					}
+
+					newLines.push(line);
+				}
+
+				const isValid = hasCommodity || Math.abs(sum) < 0.01;
+				newLines.push(`is_valid: ${isValid}`);
+
+				const newFrontmatter = newLines.join('\n');
+				const bodyContent = content.substring(frontmatterMatch[0].length);
+				const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
+
 				if (newContent !== content) {
 					await this.plugin.app.vault.modify(file, newContent);
 				}

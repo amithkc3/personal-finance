@@ -16,6 +16,7 @@ export interface FinancePluginSettings {
 	snapshotsFolderPath: string;
 	templateFilePath: string;
 	usageGuideFilePath: string;
+	dashboardDataPath: string;
 }
 
 export const DEFAULT_SETTINGS: FinancePluginSettings = {
@@ -27,7 +28,8 @@ export const DEFAULT_SETTINGS: FinancePluginSettings = {
 	transactionsFolderPath: 'Finance/Transactions',
 	snapshotsFolderPath: 'Finance/Snapshots',
 	templateFilePath: 'Finance/Templates/Transaction.md',
-	usageGuideFilePath: 'Finance/Personal-finances-usage-guide.md'
+	usageGuideFilePath: 'Finance/Personal-finances-usage-guide.md',
+	dashboardDataPath: 'Finance/dashboard-data.json'
 }
 
 export class FinanceSettingTab extends PluginSettingTab {
