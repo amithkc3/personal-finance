@@ -1,4 +1,4 @@
-import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, TAbstractFile } from 'obsidian';
+import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, TAbstractFile, setIcon } from 'obsidian';
 import { DEFAULT_SETTINGS, FinancePluginSettings, FinanceSettingTab } from "./settings";
 import { createPieChart, formatCurrency, createNetWorthLineChart, SnapshotDataPoint } from "./utils/charts";
 
@@ -38,7 +38,7 @@ export default class PersonalFinancePlugin extends Plugin {
 
 		// @ts-ignore
 		this.registerBasesView(FinanceDashboardViewType, {
-			name: 'Finance Dashboard',
+			name: 'Personal Finance Dashboard',
 			icon: 'lucide-wallet',
 			factory: (controller: any, containerEl: HTMLElement) => {
 				return new FinanceDashboardView(controller, containerEl, this) as any
@@ -673,8 +673,28 @@ export class FinanceDashboardView extends BasesView {
 		// 1. Net Worth Card (Left/Top)
 		const netWorthCard = topRow.createDiv('compact-net-worth-card');
 
+		// Header with Refresh Button
+		const headerContainer = netWorthCard.createDiv('net-worth-header-container');
+		headerContainer.style.display = 'flex';
+		headerContainer.style.justifyContent = 'space-between';
+		headerContainer.style.alignItems = 'center';
+		headerContainer.style.width = '100%';
+		headerContainer.style.marginBottom = '8px';
+
+		headerContainer.createEl('h3', { text: 'NET WORTH', cls: 'net-worth-title' });
+
+		const refreshBtn = headerContainer.createEl('button', {
+			cls: 'refresh-button-small'
+		});
+		// Recycle icon (using text for now, could use setIcon if available)
+		refreshBtn.innerHTML = '<span class="refresh-icon">↻</span> Refresh';
+		refreshBtn.addEventListener('click', async (e) => {
+			e.stopPropagation();
+			await this.refreshDashboardData(true);
+			this.onDataUpdated();
+		});
+
 		const infoContainer = netWorthCard.createDiv('net-worth-info');
-		infoContainer.createEl('h3', { text: 'NET WORTH' });
 		const amount = infoContainer.createDiv('compact-net-worth-amount');
 		amount.textContent = formatCurrency(netWorth, this.plugin.settings.currencySymbol);
 
@@ -692,50 +712,24 @@ export class FinanceDashboardView extends BasesView {
 		// 2. Actions Block (Right/Bottom)
 		const actionsContainer = topRow.createDiv('dashboard-actions-block');
 
-		// Refresh Dashboard button
-		const refreshBtn = actionsContainer.createEl('button', {
-			text: '↻ Refresh Data',
-			cls: 'action-button'
-		});
-		refreshBtn.addEventListener('click', async () => {
-			await this.refreshDashboardData(true);
-			this.onDataUpdated();
-		});
-
-		// Snapshot button
-		const snapshotBtn = actionsContainer.createEl('button', {
-			text: 'Create Snapshot',
-			cls: 'action-button'
-		});
-		snapshotBtn.addEventListener('click', async () => {
-			await this.createSnapshot(categories);
-		});
-
-		// Log Transaction button
+		// Log Transaction button (Large)
 		const logTransactionBtn = actionsContainer.createEl('button', {
-			text: 'Log Transaction',
-			cls: 'action-button'
+			cls: 'action-button action-button-large'
 		});
+		logTransactionBtn.innerHTML = '<span class="action-icon">+</span> Log Transaction';
 		logTransactionBtn.addEventListener('click', async () => {
 			await this.logTransaction();
 		});
 
-		// Unified Update Rates/Prices button
+		// Unified Update Rates/Prices button (Gear icon)
 		const updateBtn = actionsContainer.createEl('button', {
-			text: 'Update Rates & Prices',
 			cls: 'action-button'
 		});
+		const iconContainer = updateBtn.createSpan({ cls: 'action-icon' });
+		setIcon(iconContainer, 'settings');
+		updateBtn.createSpan({ text: 'Update Rates & Prices' });
 		updateBtn.addEventListener('click', () => {
 			new RatesAndPricesModal(this.app, this.plugin).open();
-		});
-
-		// Validate Transactions button
-		const validationBtn = actionsContainer.createEl('button', {
-			text: 'Validate Transactions',
-			cls: 'action-button'
-		});
-		validationBtn.addEventListener('click', () => {
-			new ValidateTransactionsModal(this.app, this).open();
 		});
 	}
 
@@ -1334,7 +1328,23 @@ export class FinanceDashboardView extends BasesView {
 
 	private createTransactionTable(): void {
 		const tableContainer = this.containerEl.createDiv('transaction-table-section');
-		tableContainer.createEl('h3', { text: 'Recent Transactions' });
+
+		// Header with Validate Button
+		const headerContainer = tableContainer.createDiv('table-header-container');
+		headerContainer.style.display = 'flex';
+		headerContainer.style.justifyContent = 'space-between';
+		headerContainer.style.alignItems = 'center';
+		headerContainer.style.marginBottom = '10px';
+
+		headerContainer.createEl('h3', { text: 'Recent Transactions', cls: 'table-title' });
+
+		const validateBtn = headerContainer.createEl('button', {
+			cls: 'validate-button-small'
+		});
+		validateBtn.innerHTML = '<span class="validate-icon">✓</span> Validate Transactions';
+		validateBtn.addEventListener('click', () => {
+			new ValidateTransactionsModal(this.app, this).open();
+		});
 
 		const propertiesToShow = this.allProperties || this.config.getOrder();
 		if (!propertiesToShow) {
@@ -1676,7 +1686,25 @@ export class FinanceDashboardView extends BasesView {
 		}
 
 		const chartContainer = this.containerEl.createDiv('net-worth-chart-container');
-		chartContainer.createEl('h3', { text: 'Net Worth Over Time' });
+
+		// Header with Snapshot Button
+		const headerContainer = chartContainer.createDiv('chart-header-container');
+		headerContainer.style.display = 'flex';
+		headerContainer.style.justifyContent = 'space-between';
+		headerContainer.style.alignItems = 'center';
+		headerContainer.style.marginBottom = '10px';
+
+		headerContainer.createEl('h3', { text: 'Net Worth Over Time', cls: 'chart-title' });
+
+		const snapshotBtn = headerContainer.createEl('button', {
+			cls: 'snapshot-button-small'
+		});
+		snapshotBtn.innerHTML = '<span class="snapshot-icon">+</span> Add Snapshot';
+		snapshotBtn.addEventListener('click', async () => {
+			// categorizesAccounts returns AccountCategory which is what createSnapshot expects
+			await this.createSnapshot(this.categorizeAccounts());
+		});
+
 		const canvas = chartContainer.createEl('canvas');
 		createNetWorthLineChart(canvas, snapshots, this.plugin.settings.currencySymbol);
 	}

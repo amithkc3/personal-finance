@@ -39,6 +39,8 @@
     flex-direction: column;
     justify-content: center;
     align-items: flex-start;
+    height: 100%;
+    /* Ensure full height for alignment */
 }
 
 .net-worth-info {
@@ -76,6 +78,10 @@
     gap: 12px;
     min-width: 200px;
     flex: 0 0 auto;
+    justify-content: space-between;
+    /* Align buttons to top and bottom of container */
+    height: auto;
+    /* Allow height to be determined by flex container */
 }
 
 /* Responsive Adjustments */
@@ -108,9 +114,9 @@
 }
 
 .action-button {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    border: none;
+    background: var(--background-secondary-alt);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     padding: 8px 16px;
     font-size: 13px;
@@ -123,7 +129,7 @@
 }
 
 .action-button:hover:not(:disabled) {
-    background: var(--interactive-accent-hover);
+    background: var(--background-modifier-hover);
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
@@ -612,4 +618,112 @@
     min-width: 150px;
     max-width: 200px;
     word-wrap: break-word;
+}
+
+/* --- New Dashboard Button Styles --- */
+
+/* Small Header Buttons (Refresh, Snapshot, Validate) */
+.refresh-button-small,
+.snapshot-button-small,
+.validate-button-small {
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+}
+
+.refresh-button-small:hover,
+.snapshot-button-small:hover,
+.validate-button-small:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--text-muted);
+}
+
+.refresh-icon,
+.snapshot-icon,
+.validate-icon,
+.action-icon {
+    font-size: 14px;
+    line-height: 1;
+    display: inline-block;
+}
+
+/* Specific button hovers */
+.snapshot-button-small:hover {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+}
+
+.validate-button-small:hover {
+    color: var(--finance-positive);
+    border-color: var(--finance-positive);
+}
+
+/* Header Title Adjustments */
+.net-worth-title,
+.chart-title,
+.table-title {
+    margin: 0 !important;
+    /* Override existing margins for alignment */
+    font-size: 14px !important;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+/* Large Action Button (Log Transaction) */
+.action-button.action-button-large {
+    padding: 0;
+    /* Reset padding to use height centering */
+    height: 84px;
+    /* ~2x the standard button (40px + gap) */
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--background-secondary-alt);
+    /* Normal background */
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    margin-bottom: 0px;
+    /* Remove margin as flex gap handles it */
+    flex: 1;
+    /* allow it to grow/shrink if needed */
+    min-height: 84px;
+    /* Prevent shrinking on mobile */
+}
+
+.action-button.action-button-large .action-icon {
+    font-size: 24px;
+    font-weight: bold;
+}
+
+/* Update Rates Button (Standard) */
+.dashboard-actions-block .action-button:not(.action-button-large) {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Update Button Icon alignment */
+.action-button .action-icon {
+    margin-right: 6px;
+    display: flex;
+    align-items: center;
+}
+
+.action-button .action-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2px;
 }
