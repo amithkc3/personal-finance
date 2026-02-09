@@ -16,8 +16,11 @@ export function createPieChart(
     type: 'assets' | 'expenses' | 'liabilities' | 'income',
     currencySymbol: string
 ): Chart {
-    const labels = Array.from(data.keys());
-    const values = Array.from(data.values()).map(v => Math.abs(v));
+    // Sort by absolute value (largest first)
+    const sortedEntries = Array.from(data.entries())
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    const labels = sortedEntries.map(e => e[0]);
+    const values = sortedEntries.map(e => Math.abs(e[1]));
 
     // High-contrast, distinguishable color palette
     const colors = [
@@ -36,7 +39,6 @@ export function createPieChart(
     ];
 
     const textColor = resolveColor('--text-normal');
-    const borderColor = resolveColor('--background-secondary');
 
     const config: ChartConfiguration = {
         type: 'doughnut',
@@ -46,7 +48,7 @@ export function createPieChart(
                 data: values,
                 backgroundColor: colors,
                 borderWidth: 2,
-                borderColor: borderColor // Use background color for gaps
+                borderColor: 'rgba(255, 255, 255, 0.3)' // Whitish border for both themes
             }]
         },
         options: {
@@ -83,12 +85,45 @@ export function createPieChart(
 
 
 export function formatCurrency(amount: number, currencySymbol: string = '₹'): string {
-    const formatted = new Intl.NumberFormat('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    }).format(amount);
+    // Round to remove decimals
+    const rounded = Math.round(amount);
+
+    let formatted: string;
+    if (currencySymbol === '₹') {
+        // Indian number system: lakhs and crores (e.g., 10,00,000)
+        formatted = formatIndianNumber(rounded);
+    } else {
+        // Western format (e.g., 1,000,000)
+        formatted = new Intl.NumberFormat('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        }).format(rounded);
+    }
 
     return `${currencySymbol} ${formatted}`;
+}
+
+function formatIndianNumber(num: number): string {
+    const isNegative = num < 0;
+    const absNum = Math.abs(num);
+    const numStr = absNum.toString();
+
+    if (numStr.length <= 3) {
+        return isNegative ? `-${numStr}` : numStr;
+    }
+
+    // Last 3 digits
+    let result = numStr.slice(-3);
+    let remaining = numStr.slice(0, -3);
+
+    // Add pairs of 2 digits from right to left
+    while (remaining.length > 0) {
+        const chunk = remaining.slice(-2);
+        remaining = remaining.slice(0, -2);
+        result = chunk + ',' + result;
+    }
+
+    return isNegative ? `-${result}` : result;
 }
 
 export interface SnapshotDataPoint {
