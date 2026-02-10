@@ -345,7 +345,7 @@ class ValidateTransactionsModal extends Modal {
 
 		option1Container.createEl('h4', { text: 'Validate Invalid Only' });
 		option1Container.createEl('p', {
-			text: 'Only checks transactions where is_valid is not true. Fast and efficient for most use cases.',
+			text: 'Only checks transactions where is_valid is false or missing. Fast and efficient for most use cases.',
 			cls: 'setting-item-description'
 		});
 
@@ -357,7 +357,7 @@ class ValidateTransactionsModal extends Modal {
 		validateInvalidBtn.style.color = 'white';
 		validateInvalidBtn.addEventListener('click', async () => {
 			this.close();
-			await this.dashboardView.validateAllTransactions(false);
+			await this.dashboardView.validateInvalidTransactions();
 		});
 
 		// Option 2: Validate recent 50 transactions (BLUE)
@@ -384,7 +384,7 @@ class ValidateTransactionsModal extends Modal {
 			await this.dashboardView.validateRecentTransactions(50);
 		});
 
-		// Option 3: Force validate all (RED)
+		// Option 3: Force Validate All (RED)
 		const option3Container = contentEl.createDiv({ cls: 'validation-option' });
 		option3Container.style.padding = '15px';
 		option3Container.style.border = '1px solid var(--background-modifier-border)';
@@ -392,7 +392,7 @@ class ValidateTransactionsModal extends Modal {
 
 		option3Container.createEl('h4', { text: 'Force Validate All' });
 		const warningText = option3Container.createEl('p', {
-			text: '⚠️ Re-validates ALL transactions, even those already marked valid. This is an expensive operation that reads and modifies every transaction file.',
+			text: '⚠️ Re-validates ALL transactions, regardless of current validity status. Detects and fixes corrupted transactions.',
 			cls: 'setting-item-description'
 		});
 		warningText.style.color = 'var(--text-warning)';
@@ -405,7 +405,7 @@ class ValidateTransactionsModal extends Modal {
 		forceValidateBtn.style.color = 'white';
 		forceValidateBtn.addEventListener('click', async () => {
 			this.close();
-			await this.dashboardView.validateAllTransactions(true);
+			await this.dashboardView.validateAllTransactions();
 		});
 	}
 
@@ -805,7 +805,8 @@ export class FinanceDashboardView extends BasesView {
 		return false;
 	}
 
-	public async validateAllTransactions(forceAll: boolean = false): Promise<void> {
+	// Validate only transactions where is_valid is false or missing
+	public async validateInvalidTransactions(): Promise<void> {
 		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
 		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
 
@@ -815,20 +816,34 @@ export class FinanceDashboardView extends BasesView {
 		}
 
 		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
-		let filesToProcess: TFile[] = allFiles;
+		const filesToProcess: TFile[] = [];
 
-		// If not forcing all, only process files that need validation
-		if (!forceAll) {
-			filesToProcess = [];
-			for (const file of allFiles) {
-				const content = await this.plugin.app.vault.read(file);
-				// Check if is_valid is not explicitly true
-				if (!content.includes('is_valid: true')) {
-					filesToProcess.push(file);
-				}
+		// Only process files where is_valid is not true
+		for (const file of allFiles) {
+			const content = await this.plugin.app.vault.read(file);
+			if (!content.includes('is_valid: true')) {
+				filesToProcess.push(file);
 			}
 		}
 
+		await this.performValidation(filesToProcess);
+	}
+
+	public async validateAllTransactions(): Promise<void> {
+		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
+		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
+
+		if (!(folder instanceof TFolder)) {
+			new Notice('Transactions folder not found.');
+			return;
+		}
+
+		const filesToProcess = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
+		await this.performValidation(filesToProcess);
+	}
+
+	// Core validation logic shared by all validation methods
+	private async performValidation(filesToProcess: TFile[]): Promise<void> {
 		let validCount = 0;
 		let invalidCount = 0;
 
@@ -849,7 +864,6 @@ export class FinanceDashboardView extends BasesView {
 				let sum = 0;
 				let hasCommodity = false;
 				const newLines: string[] = [];
-				let hasIsValid = false;
 
 				for (const line of lines) {
 					const colonIndex = line.indexOf(':');
@@ -863,7 +877,6 @@ export class FinanceDashboardView extends BasesView {
 
 					// Skip is_valid line, we'll add it at the end
 					if (key === 'is_valid') {
-						hasIsValid = true;
 						continue;
 					}
 
@@ -926,72 +939,7 @@ export class FinanceDashboardView extends BasesView {
 
 		// Take only the top N files
 		const filesToProcess = allFiles.slice(0, count);
-		let validCount = 0;
-		let invalidCount = 0;
-
-		new Notice(`Validating ${filesToProcess.length} recent transactions...`);
-
-		for (const file of filesToProcess) {
-			try {
-				const content = await this.plugin.app.vault.read(file);
-				const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-
-				if (!frontmatterMatch) continue;
-
-				const frontmatter = frontmatterMatch[1] || '';
-				const lines = frontmatter.split('\n');
-
-				let sum = 0;
-				let hasCommodity = false;
-				const newLines: string[] = [];
-
-				for (const line of lines) {
-					const colonIndex = line.indexOf(':');
-					if (colonIndex === -1) {
-						newLines.push(line);
-						continue;
-					}
-
-					const key = line.substring(0, colonIndex).trim();
-					const value = line.substring(colonIndex + 1).trim();
-
-					if (key === 'is_valid') continue;
-
-					if (key.startsWith('Asset-') || key.startsWith('Liability-') ||
-						key.startsWith('Expense-') || key.startsWith('Income-')) {
-						const numValue = parseFloat(value);
-						if (!isNaN(numValue)) {
-							sum += numValue;
-						}
-					} else if (key.startsWith('Commodity-')) {
-						hasCommodity = true;
-					}
-
-					newLines.push(line);
-				}
-
-				const isValid = hasCommodity || Math.abs(sum) < 0.01;
-				newLines.push(`is_valid: ${isValid}`);
-
-				const newFrontmatter = newLines.join('\n');
-				const bodyContent = content.substring(frontmatterMatch[0].length);
-				const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
-
-				if (newContent !== content) {
-					await this.plugin.app.vault.modify(file, newContent);
-				}
-
-				if (isValid) {
-					validCount++;
-				} else {
-					invalidCount++;
-				}
-			} catch (error) {
-				console.error(`Error validating ${file.path}:`, error);
-			}
-		}
-
-		new Notice(`Validation complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`);
+		await this.performValidation(filesToProcess);
 	}
 
 	private async logTransaction(): Promise<void> {
