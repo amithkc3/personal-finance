@@ -18,7 +18,9 @@ const ACCOUNT_PREFIXES = {
 	LIABILITY: 'Liability-',
 	EXPENSE: 'Expense-',
 	INCOME: 'Income-',
-	COMMODITY: 'Commodity-'
+	COMMODITY: 'Commodity-',
+	UNIT_PRICE: 'UnitPrice-',
+	INVALID_REASON: 'Invalid_reason'
 } as const;
 
 export default class PersonalFinancePlugin extends Plugin {
@@ -336,21 +338,21 @@ class ValidateTransactionsModal extends Modal {
 			text: 'Choose how to validate your transactions:'
 		});
 
-		// Option 1: Validate only invalid (GREEN)
+		// Option 1: Validate Invalid Transactions (GREEN)
 		const option1Container = contentEl.createDiv({ cls: 'validation-option' });
-		option1Container.style.marginBottom = '15px';
+		option1Container.style.marginBottom = '20px';
 		option1Container.style.padding = '15px';
 		option1Container.style.border = '1px solid var(--background-modifier-border)';
 		option1Container.style.borderRadius = '8px';
 
-		option1Container.createEl('h4', { text: 'Validate Invalid Only' });
+		option1Container.createEl('h4', { text: 'Validate Invalid Transactions' });
 		option1Container.createEl('p', {
-			text: 'Only checks transactions where is_valid is false or missing. Fast and efficient for most use cases.',
+			text: 'Validates new transactions without checksums. Computes commodity prices, generates checksums, and marks as valid/invalid.',
 			cls: 'setting-item-description'
 		});
 
 		const validateInvalidBtn = option1Container.createEl('button', {
-			text: 'Validate Invalid Transactions'
+			text: 'Validate New Transactions'
 		});
 		validateInvalidBtn.style.width = '100%';
 		validateInvalidBtn.style.backgroundColor = '#28a745';
@@ -360,52 +362,50 @@ class ValidateTransactionsModal extends Modal {
 			await this.dashboardView.validateInvalidTransactions();
 		});
 
-		// Option 2: Validate recent 50 transactions (BLUE)
+		// Option 2: Verify Transaction Integrity (BLUE/RED with input)
 		const option2Container = contentEl.createDiv({ cls: 'validation-option' });
-		option2Container.style.marginBottom = '15px';
 		option2Container.style.padding = '15px';
 		option2Container.style.border = '1px solid var(--background-modifier-border)';
 		option2Container.style.borderRadius = '8px';
 
-		option2Container.createEl('h4', { text: 'Validate Recent 50' });
-		option2Container.createEl('p', {
-			text: 'Validates only the 50 most recently modified transaction files. Good for quick checks after recent edits.',
+		option2Container.createEl('h4', { text: 'Verify Transaction Integrity' });
+		const desc = option2Container.createEl('p', {
+			text: 'Uses checksum comparison to detect tampering. Verifies recent N transactions or all transactions (-1).',
 			cls: 'setting-item-description'
 		});
 
-		const validateRecentBtn = option2Container.createEl('button', {
-			text: 'Validate Recent 50 Transactions'
+		// Input for N
+		const inputContainer = option2Container.createDiv();
+		inputContainer.style.marginTop = '10px';
+		inputContainer.style.marginBottom = '10px';
+
+		const label = inputContainer.createEl('label', { text: 'Number of transactions to verify (use -1 for all): ' });
+		label.style.display = 'block';
+		label.style.marginBottom = '5px';
+
+		const input = inputContainer.createEl('input', {
+			type: 'number',
+			value: '50'
 		});
-		validateRecentBtn.style.width = '100%';
-		validateRecentBtn.style.backgroundColor = 'var(--interactive-accent)';
-		validateRecentBtn.style.color = 'white';
-		validateRecentBtn.addEventListener('click', async () => {
+		input.style.width = '100%';
+		input.style.padding = '5px';
+		input.min = '-1';
+
+		const verifyBtn = option2Container.createEl('button', {
+			text: 'Verify Transaction Integrity'
+		});
+		verifyBtn.style.width = '100%';
+		verifyBtn.style.marginTop = '10px';
+		verifyBtn.style.backgroundColor = 'var(--interactive-accent)';
+		verifyBtn.style.color = 'white';
+		verifyBtn.addEventListener('click', async () => {
+			const count = parseInt(input.value);
+			if (isNaN(count) || count < -1) {
+				new Notice('Please enter a valid number (-1 for all, or positive number)');
+				return;
+			}
 			this.close();
-			await this.dashboardView.validateRecentTransactions(50);
-		});
-
-		// Option 3: Force Validate All (RED)
-		const option3Container = contentEl.createDiv({ cls: 'validation-option' });
-		option3Container.style.padding = '15px';
-		option3Container.style.border = '1px solid var(--background-modifier-border)';
-		option3Container.style.borderRadius = '8px';
-
-		option3Container.createEl('h4', { text: 'Force Validate All' });
-		const warningText = option3Container.createEl('p', {
-			text: '⚠️ Re-validates ALL transactions, regardless of current validity status. Detects and fixes corrupted transactions.',
-			cls: 'setting-item-description'
-		});
-		warningText.style.color = 'var(--text-warning)';
-
-		const forceValidateBtn = option3Container.createEl('button', {
-			text: 'Force Validate All Transactions'
-		});
-		forceValidateBtn.style.width = '100%';
-		forceValidateBtn.style.backgroundColor = 'var(--text-error)';
-		forceValidateBtn.style.color = 'white';
-		forceValidateBtn.addEventListener('click', async () => {
-			this.close();
-			await this.dashboardView.validateAllTransactions();
+			await this.dashboardView.verifyTransactionIntegrity(count);
 		});
 	}
 
@@ -774,23 +774,6 @@ export class FinanceDashboardView extends BasesView {
 		return `${Math.floor(seconds / 86400)} days ago`;
 	}
 
-	private validateTransaction(entry: any, accountProps: string[]): boolean {
-		let sum = 0;
-
-		for (const prop of accountProps) {
-			// @ts-ignore
-			const value = entry.getValue(prop);
-			// @ts-ignore
-			if (value && value.data && typeof value.data === 'number') {
-				// @ts-ignore
-				sum += value.data;
-			}
-		}
-
-		// Allow small floating point tolerance
-		return Math.abs(sum) < 0.01;
-	}
-
 	private hasCommodity(entry: any, accountProps: string[]): boolean {
 		for (const prop of accountProps) {
 			// @ts-ignore
@@ -805,7 +788,49 @@ export class FinanceDashboardView extends BasesView {
 		return false;
 	}
 
-	// Validate only transactions where is_valid is false or missing
+	// Compute simple hash for checksum (browser-compatible for Obsidian)
+	private computeChecksum(accountProps: Record<string, number>): string {
+		const sortedKeys = Object.keys(accountProps).sort();
+		const data = sortedKeys.map(k => `${k}:${accountProps[k]}`).join('|');
+
+		// Simple hash function (compatible with browser environment)
+		let hash = 0;
+		for (let i = 0; i < data.length; i++) {
+			const char = data.charCodeAt(i);
+			hash = ((hash << 5) - hash) + char;
+			hash = hash & hash; // Convert to 32-bit integer
+		}
+
+		// Convert to positive hex string
+		return Math.abs(hash).toString(16).padStart(8, '0');
+	}
+
+	// Get commodity price - prioritize existing UnitPrice, then settings, then default
+	private getCommodityPrice(commodityName: string, frontmatterObj: any): number {
+		// 1. Check if UnitPrice already exists in transaction (historical price)
+		const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+		console.log("getCommodityPrice called");
+		console.log(unitPriceKey, frontmatterObj[unitPriceKey]);
+		if (frontmatterObj[unitPriceKey] !== undefined) {
+			const price = parseFloat(frontmatterObj[unitPriceKey]);
+			return isNaN(price) ? 1 : price;
+		}
+
+		// 2. Get from settings and convert currency if needed
+		const pricing = this.plugin.settings.commodityPrices[commodityName];
+		if (!pricing) return 1; // Default fallback
+
+		let price = pricing.value;
+		// Convert to transaction currency if needed
+		if (pricing.currency === '$' && this.plugin.settings.currencySymbol === '₹') {
+			price *= this.plugin.settings.usdToInr;
+		} else if (pricing.currency === '₹' && this.plugin.settings.currencySymbol === '$') {
+			price /= this.plugin.settings.usdToInr;
+		}
+		return price;
+	}
+
+	// Validate only transactions where checksum doesn't exist (truly new transactions)
 	public async validateInvalidTransactions(): Promise<void> {
 		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
 		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
@@ -818,18 +843,21 @@ export class FinanceDashboardView extends BasesView {
 		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
 		const filesToProcess: TFile[] = [];
 
-		// Only process files where is_valid is not true
+		// Only process files WITHOUT checksum or with empty/undefined checksum
 		for (const file of allFiles) {
 			const content = await this.plugin.app.vault.read(file);
-			if (!content.includes('is_valid: true')) {
+			const checksumMatch = content.match(/^checksum:\s*(.*)$/m);
+			// Process if checksum doesn't exist OR if it exists but is empty/whitespace
+			if (!checksumMatch || !checksumMatch[1] || checksumMatch[1].trim() === '') {
 				filesToProcess.push(file);
 			}
 		}
 
-		await this.performValidation(filesToProcess);
+		await this.validateTransaction(filesToProcess);
 	}
 
-	public async validateAllTransactions(): Promise<void> {
+	// Verify transaction integrity using checksums (for already-validated transactions)
+	public async verifyTransactionIntegrity(count: number): Promise<void> {
 		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
 		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
 
@@ -838,21 +866,29 @@ export class FinanceDashboardView extends BasesView {
 			return;
 		}
 
-		const filesToProcess = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
-		await this.performValidation(filesToProcess);
+		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
+
+		// Sort by mtime descending (most recent first)
+		allFiles.sort((a, b) => b.stat.mtime - a.stat.mtime);
+
+		// If count is -1 or >= total, verify all
+		const filesToProcess = (count === -1 || count >= allFiles.length)
+			? allFiles
+			: allFiles.slice(0, count);
+
+		await this.verifyTransactionChecksum(filesToProcess);
 	}
 
-	// Core validation logic shared by all validation methods
-	private async performValidation(filesToProcess: TFile[]): Promise<void> {
+	// Core validation logic for new transactions (without checksums)
+	private async validateTransaction(filesToProcess: TFile[]): Promise<void> {
 		let validCount = 0;
 		let invalidCount = 0;
 
-		new Notice(`Validating ${filesToProcess.length} transactions...`);
+		new Notice(`Validating ${filesToProcess.length} new transactions...`);
 
 		for (const file of filesToProcess) {
 			try {
 				const content = await this.plugin.app.vault.read(file);
-				// Handle both CRLF (Windows) and LF (Unix) line endings
 				const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
 
 				if (!frontmatterMatch) continue;
@@ -860,9 +896,159 @@ export class FinanceDashboardView extends BasesView {
 				const frontmatter = frontmatterMatch[1] || '';
 				const lines = frontmatter.split('\n');
 
-				// Calculate sum of all account properties
+				// Parse frontmatter into object for commodity price lookup
+				const frontmatterObj: Record<string, any> = {};
+				for (const line of lines) {
+					const colonIndex = line.indexOf(':');
+					if (colonIndex !== -1) {
+						const key = line.substring(0, colonIndex).trim();
+						const value = line.substring(colonIndex + 1).trim();
+						frontmatterObj[key] = value;
+					}
+				}
+
+				// Calculate sum including commodities with their unit prices
 				let sum = 0;
-				let hasCommodity = false;
+				const accountProps: Record<string, number> = {};
+				const newLines: string[] = [];
+				const commodities: string[] = [];
+
+				for (const line of lines) {
+					const colonIndex = line.indexOf(':');
+					if (colonIndex === -1) {
+						newLines.push(line);
+						continue;
+					}
+
+					const key = line.substring(0, colonIndex).trim();
+					const value = line.substring(colonIndex + 1).trim();
+
+					// Skip properties that shouldn't be in frontmatter or checksum
+					if (key === 'is_valid' || key === ACCOUNT_PREFIXES.INVALID_REASON || key === 'checksum') {
+						continue;
+					}
+
+					// Handle account properties
+					if (key.startsWith(ACCOUNT_PREFIXES.ASSET) || key.startsWith(ACCOUNT_PREFIXES.LIABILITY) ||
+						key.startsWith(ACCOUNT_PREFIXES.EXPENSE) || key.startsWith(ACCOUNT_PREFIXES.INCOME)) {
+						const numValue = parseFloat(value);
+						if (!isNaN(numValue)) {
+							sum += numValue;
+							accountProps[key] = numValue;
+						}
+					} else if (key.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						// Track commodities for unit price computation
+						const commodityName = key.substring(ACCOUNT_PREFIXES.COMMODITY.length);
+						const numValue = parseFloat(value);
+						if (!isNaN(numValue)) {
+							commodities.push(commodityName);
+							accountProps[key] = numValue;
+
+							// Get or compute unit price
+							const unitPrice = this.getCommodityPrice(commodityName, frontmatterObj);
+							const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+							accountProps[unitPriceKey] = unitPrice;
+
+							// Add commodity value to sum
+							sum += numValue * unitPrice;
+							console.log(line, numValue, unitPrice)
+						}
+					} else if (key.startsWith(ACCOUNT_PREFIXES.UNIT_PRICE)) {
+						// Include existing UnitPrice in accountProps for checksum
+						console.log(line, value)
+						const numValue = parseFloat(value);
+						if (!isNaN(numValue)) {
+							accountProps[key] = numValue;
+						}
+					}
+
+					newLines.push(line);
+				}
+
+				// Add UnitPrice properties for commodities (if not already present)
+				for (const commodityName of commodities) {
+					const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+					if (!frontmatterObj[unitPriceKey]) {
+						const unitPrice = accountProps[unitPriceKey]; // Already computed above
+						newLines.push(`${unitPriceKey}: ${unitPrice}`);
+					}
+				}
+
+				// Compute checksum from account properties
+				const checksum = this.computeChecksum(accountProps);
+
+				console.log(sum);
+				// Determine validity and build Invalid_reason if needed
+				const isValid = Math.abs(sum) < 0.01;
+				let invalidReason = '';
+
+				if (!isValid) {
+					invalidReason = `Transaction-difference-${sum.toFixed(2)}-should-be-0-please-fix`;
+				}
+
+				// Add validation properties
+				if (invalidReason) {
+					newLines.push(`${ACCOUNT_PREFIXES.INVALID_REASON}: ${invalidReason}`);
+				}
+				newLines.push(`checksum: ${checksum}`);
+				newLines.push(`is_valid: ${isValid}`);
+
+				// Reconstruct content
+				const newFrontmatter = newLines.join('\n');
+				const bodyContent = content.substring(frontmatterMatch[0].length);
+				const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
+
+				// Always update (since we're adding checksum and possibly UnitPrice)
+				await this.plugin.app.vault.modify(file, newContent);
+
+				if (isValid) {
+					validCount++;
+				} else {
+					invalidCount++;
+				}
+			} catch (error) {
+				console.error(`Error validating ${file.path}: `, error);
+			}
+		}
+
+		new Notice(`Validation complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`);
+	}
+
+	// Verify transaction integrity using checksum comparison
+	private async verifyTransactionChecksum(filesToProcess: TFile[]): Promise<void> {
+		let validCount = 0;
+		let invalidCount = 0;
+		let tamperedCount = 0;
+
+		new Notice(`Verifying ${filesToProcess.length} transactions...`);
+
+		for (const file of filesToProcess) {
+			try {
+				const content = await this.plugin.app.vault.read(file);
+				const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+
+				if (!frontmatterMatch) continue;
+
+				const frontmatter = frontmatterMatch[1] || '';
+				const lines = frontmatter.split('\n');
+
+				// Parse frontmatter
+				const frontmatterObj: Record<string, any> = {};
+				for (const line of lines) {
+					const colonIndex = line.indexOf(':');
+					if (colonIndex !== -1) {
+						const key = line.substring(0, colonIndex).trim();
+						const value = line.substring(colonIndex + 1).trim();
+						frontmatterObj[key] = value;
+					}
+				}
+
+				// Extract stored checksum
+				const storedChecksum = frontmatterObj['checksum'];
+
+				// Recompute account properties and checksum
+				let sum = 0;
+				const accountProps: Record<string, number> = {};
 				const newLines: string[] = [];
 
 				for (const line of lines) {
@@ -875,31 +1061,57 @@ export class FinanceDashboardView extends BasesView {
 					const key = line.substring(0, colonIndex).trim();
 					const value = line.substring(colonIndex + 1).trim();
 
-					// Skip is_valid line, we'll add it at the end
-					if (key === 'is_valid') {
+					// Skip validation-related properties
+					if (key === 'is_valid' || key === ACCOUNT_PREFIXES.INVALID_REASON || key === 'checksum') {
 						continue;
 					}
 
-					// Check if this is an account property
-					if (key.startsWith('Asset-') || key.startsWith('Liability-') ||
-						key.startsWith('Expense-') || key.startsWith('Income-')) {
+					// Collect account properties for checksum
+					if (key.startsWith(ACCOUNT_PREFIXES.ASSET) || key.startsWith(ACCOUNT_PREFIXES.LIABILITY) ||
+						key.startsWith(ACCOUNT_PREFIXES.EXPENSE) || key.startsWith(ACCOUNT_PREFIXES.INCOME) ||
+						key.startsWith(ACCOUNT_PREFIXES.COMMODITY) || key.startsWith(ACCOUNT_PREFIXES.UNIT_PRICE)) {
 						const numValue = parseFloat(value);
 						if (!isNaN(numValue)) {
-							sum += numValue;
+							accountProps[key] = numValue;
+
+							// Add to sum (commodities need UnitPrice multiplication)
+							if (key.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+								const commodityName = key.substring(ACCOUNT_PREFIXES.COMMODITY.length);
+								const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+								const unitPrice = accountProps[unitPriceKey] || parseFloat(frontmatterObj[unitPriceKey] || '0');
+								sum += numValue * unitPrice;
+							} else if (!key.startsWith(ACCOUNT_PREFIXES.UNIT_PRICE)) {
+								sum += numValue;
+							}
 						}
-					} else if (key.startsWith('Commodity-')) {
-						hasCommodity = true;
 					}
 
 					newLines.push(line);
 				}
 
-				// Determine validity (commodities are always valid, others need sum = 0)
-				const isValid = hasCommodity || Math.abs(sum) < 0.01;
+				// Compute new checksum
+				const computedChecksum = this.computeChecksum(accountProps);
 
-				// Add is_valid property
+				// Check for issues
+				const checksumMismatch = storedChecksum !== computedChecksum;
+				const sumInvalid = Math.abs(sum) >= 0.01;
+				let invalidReason = '';
+				if (sumInvalid) {
+					invalidReason = `Transaction-difference-${sum.toFixed(2)}-should-be-0-please-fix`;
+				}
+				if (checksumMismatch) {
+					if (invalidReason) invalidReason += ' ';
+					invalidReason += `Checksum-mismatch-existing-${storedChecksum}-computed-${computedChecksum}`;
+				}
+
+				const isValid = !sumInvalid && !checksumMismatch;
+
+				// Update frontmatter with validation results
+				if (invalidReason) {
+					newLines.push(`${ACCOUNT_PREFIXES.INVALID_REASON}: ${invalidReason}`);
+				}
+				newLines.push(`checksum: ${storedChecksum}`); // Keep original checksum
 				newLines.push(`is_valid: ${isValid}`);
-
 				// Reconstruct content
 				const newFrontmatter = newLines.join('\n');
 				const bodyContent = content.substring(frontmatterMatch[0].length);
@@ -914,32 +1126,17 @@ export class FinanceDashboardView extends BasesView {
 					validCount++;
 				} else {
 					invalidCount++;
+					if (checksumMismatch) tamperedCount++;
 				}
 			} catch (error) {
-				console.error(`Error validating ${file.path}:`, error);
+				console.error(`Error verifying ${file.path}: `, error);
 			}
 		}
 
-		new Notice(`Validation complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`);
-	}
-
-	public async validateRecentTransactions(count: number): Promise<void> {
-		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
-		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
-
-		if (!(folder instanceof TFolder)) {
-			new Notice('Transactions folder not found.');
-			return;
-		}
-
-		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
-
-		// Sort by mtime descending (most recent first)
-		allFiles.sort((a, b) => b.stat.mtime - a.stat.mtime);
-
-		// Take only the top N files
-		const filesToProcess = allFiles.slice(0, count);
-		await this.performValidation(filesToProcess);
+		const message = tamperedCount > 0
+			? `Verification complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid(${tamperedCount} tampered)`
+			: `Verification complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`;
+		new Notice(message);
 	}
 
 	private async logTransaction(): Promise<void> {
