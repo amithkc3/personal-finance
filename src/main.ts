@@ -1,4 +1,4 @@
-import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, TAbstractFile, setIcon, MarkdownView } from 'obsidian';
+import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, TAbstractFile, setIcon } from 'obsidian';
 import { DEFAULT_SETTINGS, FinancePluginSettings, FinanceSettingTab } from "./settings";
 import { createPieChart, formatCurrency, createNetWorthLineChart, SnapshotDataPoint } from "./utils/charts";
 
@@ -27,11 +27,6 @@ const ACCOUNT_PREFIXES = {
 	INTEGRITY_ERROR: 'integrity_error'
 } as const;
 
-// Fields that are stripped when unlocking a transaction
-const COMPUTED_FIELDS = [
-	'locked', 'hash', 'is_valid', 'Invalid_reason',
-	'prev_valid_transaction', 'Prev_valid_transaction_hash', 'integrity_error'
-] as const;
 
 export default class PersonalFinancePlugin extends Plugin {
 	settings: FinancePluginSettings;
@@ -48,38 +43,6 @@ export default class PersonalFinancePlugin extends Plugin {
 			}
 		}));
 
-		// Register an event for when the layout changes to enforce read-only mode
-		this.registerEvent(
-			this.app.workspace.on('layout-change', this.onLayoutChange.bind(this))
-		);
-
-		// Add command to unlock the current transaction file
-		this.addCommand({
-			id: 'unlock-current-transaction',
-			name: 'Unlock Current Transaction',
-			checkCallback: (checking: boolean) => {
-				const activeLeaf = this.app.workspace.activeLeaf;
-				if (!activeLeaf) return false;
-
-				const view = activeLeaf.view;
-				if (!(view instanceof MarkdownView)) return false;
-
-				const file = view.file;
-				if (!file) return false;
-
-				// Check if it's a locked transaction file
-				const cache = this.app.metadataCache.getFileCache(file);
-				if (!cache || !cache.frontmatter || !cache.frontmatter.locked) {
-					return false;
-				}
-
-				if (checking) return true;
-
-				// Perform unlock
-				this.unlockTransaction(file);
-				return true;
-			}
-		});
 
 		this.addRibbonIcon('lucide-wallet', 'Open Finance Dashboard', async () => {
 			const filePath = this.settings.financeBasePath;
@@ -243,7 +206,7 @@ export default class PersonalFinancePlugin extends Plugin {
 			if (!(await this.app.vault.adapter.exists(seedPath))) {
 				const seedDate = new Date().toISOString().slice(0, 16);
 				const seedHash = 'seed0000'; // Fixed genesis hash
-				const seedContent = `---\ncomment: Genesis seed transaction — do not edit\ndate: ${seedDate}\nhash: ${seedHash}\nis_valid: true\nlocked: true\n---\n\n# Seed Transaction\nThis is the genesis block for the transaction integrity chain.\n`;
+				const seedContent = `---\ncomment: Genesis seed transaction — do not edit\ndate: ${seedDate}\nhash: ${seedHash}\nis_valid: true\n---\n\n# Seed Transaction\nThis is the genesis block for the transaction integrity chain.\n`;
 				await this.app.vault.create(seedPath, seedContent);
 				new Notice('Created seed transaction (genesis block)');
 			}
@@ -253,69 +216,8 @@ export default class PersonalFinancePlugin extends Plugin {
 			new Notice('Error creating finance folders/template');
 		}
 	}
-	// Handle layout changes to enforce read-only mode for locked files
-	private async onLayoutChange() {
-		// Get all open leaves in the workspace
-		const leaves = this.app.workspace.getLeavesOfType('markdown');
-
-		// Iterate over each leaf
-		leaves.forEach((leaf) => {
-			// Ensure the leaf has a MarkdownView
-			if (!(leaf.view instanceof MarkdownView)) {
-				return;
-			}
-
-			// Get the file currently opened in the leaf
-			const file = leaf.view.file;
-
-			// If no file is present, skip
-			if (!file) {
-				return;
-			}
-
-			// Check frontmatter for locked property
-			const cache = this.app.metadataCache.getFileCache(file);
-			if (cache && cache.frontmatter && cache.frontmatter.locked === true) {
-				// Force the view into preview (read mode)
-				const viewState = leaf.getViewState();
-				if (viewState.state && viewState.state.mode !== 'preview') {
-					leaf.setViewState({
-						...viewState,
-						state: {
-							...viewState.state,
-							mode: 'preview'
-						}
-					});
-					new Notice('This transaction is locked. Use "Unlock Current Transaction" to edit.');
-				}
-			}
-		});
-	}
-
-	async unlockTransaction(file: TFile) {
-		try {
-			const content = await this.app.vault.read(file);
-			const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-
-			if (!frontmatterMatch) return;
-
-			const frontmatter = frontmatterMatch[1] || '';
-			const lines = frontmatter.split('\n');
-			// Only remove the locked field — leave all other properties intact
-			const newLines = lines.filter(line => !line.trim().startsWith('locked:'));
-
-			const newFrontmatter = newLines.join('\n');
-			const bodyContent = content.substring(frontmatterMatch[0].length);
-			const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
-
-			await this.app.vault.modify(file, newContent);
-			new Notice(`Unlocked ${file.basename} — ready for re-validation`);
-		} catch (error) {
-			console.error('Error unlocking file:', error);
-			new Notice('Error unlocking file');
-		}
-	}
 }
+
 
 
 // Combined Modal
@@ -1027,12 +929,14 @@ export class FinanceDashboardView extends BasesView {
 				const fmObj = this.parseFrontmatter(rawFm);
 				const bodyContent = content.substring(fmMatch[0].length);
 
-				// Build clean lines — strip any existing validation/computed fields
+				// Build clean lines — strip any existing validation/computed fields before re-processing
+				const STRIP_FIELDS = new Set(['hash', 'is_valid', 'Invalid_reason',
+					'prev_valid_transaction', 'Prev_valid_transaction_hash', 'integrity_error']);
 				const baseLines = rawFm.split('\n').filter(line => {
 					const trimmed = line.trim();
 					const colonIdx = trimmed.indexOf(':');
 					const key = colonIdx !== -1 ? trimmed.substring(0, colonIdx).trim() : trimmed;
-					return !(COMPUTED_FIELDS as readonly string[]).includes(key);
+					return !STRIP_FIELDS.has(key);
 				});
 
 				// ── Step 1: Commodity price logic ─────────────────────────────
@@ -1131,7 +1035,6 @@ export class FinanceDashboardView extends BasesView {
 
 				baseLines.push(`${ACCOUNT_PREFIXES.HASH}: ${txHash}`);
 				baseLines.push(`is_valid: true`);
-				baseLines.push(`locked: true`);
 
 				const newContent = `---\n${baseLines.join('\n')}\n---${bodyContent}`;
 				await this.plugin.app.vault.modify(file, newContent);
@@ -1160,9 +1063,10 @@ export class FinanceDashboardView extends BasesView {
 
 		const allFiles = folder.children.filter(f => f instanceof TFile && (f as TFile).extension === 'md') as TFile[];
 
-		// Collect valid+hashed transactions
+		// Collect valid+hashed transactions, excluding the seed (its hash is fixed, not computed)
 		const validTxFiles: TFile[] = [];
 		for (const file of allFiles) {
+			if (file.basename === 'seed-transaction') continue; // skip genesis block
 			const content = await this.plugin.app.vault.read(file);
 			if (content.match(/^is_valid:\s*true/m) && content.match(/^hash:\s*\S/m)) {
 				validTxFiles.push(file);
@@ -1186,6 +1090,7 @@ export class FinanceDashboardView extends BasesView {
 		let headPath = validTxFiles[0]!.path;
 		let count = 0;
 		let verifiedCount = 0;
+		let foundError = false;
 
 		while (count < depth) {
 			const headFile = this.plugin.app.vault.getAbstractFileByPath(headPath);
@@ -1195,6 +1100,7 @@ export class FinanceDashboardView extends BasesView {
 
 			if (!result.ok) {
 				new Notice(`⚠️ Chain broken at: ${headFile.basename}\n${result.errorMsg}`, 8000);
+				foundError = true;
 				break;
 			}
 
@@ -1205,7 +1111,7 @@ export class FinanceDashboardView extends BasesView {
 			headPath = result.prevPath;
 		}
 
-		if (count >= depth || !validTxFiles[count]) {
+		if (!foundError) {
 			new Notice(`✓ Integrity verified: ${verifiedCount} transaction(s) intact.`);
 		}
 	}
@@ -1309,7 +1215,7 @@ export class FinanceDashboardView extends BasesView {
 			const trimmed = l.trim();
 			const colonIdx = trimmed.indexOf(':');
 			const k = colonIdx !== -1 ? trimmed.substring(0, colonIdx).trim() : trimmed;
-			return k !== 'is_valid' && k !== ACCOUNT_PREFIXES.INTEGRITY_ERROR && k !== 'locked';
+			return k !== 'is_valid' && k !== ACCOUNT_PREFIXES.INTEGRITY_ERROR;
 		});
 		lines.push(`is_valid: false`);
 		lines.push(`${ACCOUNT_PREFIXES.INTEGRITY_ERROR}: ${msg}`);
