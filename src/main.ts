@@ -1,4 +1,4 @@
-import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, TAbstractFile, setIcon } from 'obsidian';
+import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, setIcon } from 'obsidian';
 import { DEFAULT_SETTINGS, FinancePluginSettings, FinanceSettingTab } from "./settings";
 import { createPieChart, formatCurrency, createNetWorthLineChart, SnapshotDataPoint } from "./utils/charts";
 
@@ -18,8 +18,16 @@ const ACCOUNT_PREFIXES = {
 	LIABILITY: 'Liability-',
 	EXPENSE: 'Expense-',
 	INCOME: 'Income-',
-	COMMODITY: 'Commodity-'
+	COMMODITY: 'Commodity-',
+	UNIT_PRICE: 'UnitPrice-',
+	INVALID_REASON: 'Invalid_reason',
+	HASH: 'hash',
+	PREV_VALID_TX: 'prev_valid_transaction',
+	PREV_VALID_TX_HASH: 'Prev_valid_transaction_hash',
+	INTEGRITY_ERROR: 'integrity_error',
+	TRANSACTION_ID: 'transaction_id'
 } as const;
+
 
 export default class PersonalFinancePlugin extends Plugin {
 	settings: FinancePluginSettings;
@@ -35,6 +43,7 @@ export default class PersonalFinancePlugin extends Plugin {
 				await this.loadSettings();
 			}
 		}));
+
 
 		this.addRibbonIcon('lucide-wallet', 'Open Finance Dashboard', async () => {
 			const filePath = this.settings.financeBasePath;
@@ -139,21 +148,19 @@ export default class PersonalFinancePlugin extends Plugin {
 				await this.app.vault.createFolder(this.settings.snapshotsFolderPath);
 			}
 
-			// Check if snapshots folder is empty and create default if needed
-			const snapshotsFolder = this.app.vault.getAbstractFileByPath(this.settings.snapshotsFolderPath);
-			if (snapshotsFolder instanceof TFolder) {
-				const snapshotFiles = snapshotsFolder.children.filter(f => f instanceof TFile && f.extension === 'md');
-				if (snapshotFiles.length === 0) {
-					const now = new Date();
-					const filename = `snapshot-initial.md`;
-					const content = `---\n` +
-						`date: ${now.toISOString()}\n` +
-						`---\n\n` +
-						`Initial empty snapshot to initialize charts.`;
+			// Check if initial snapshot exists and create it if not — use adapter.exists() to
+			// avoid a vault-cache miss that occurs when getAbstractFileByPath() is called
+			// immediately after createFolder() before Obsidian registers the new folder.
+			const initialSnapshotPath = `${this.settings.snapshotsFolderPath}/snapshot-initial.md`;
+			if (!(await this.app.vault.adapter.exists(initialSnapshotPath))) {
+				const now = new Date();
+				const content = `---\n` +
+					`date: ${now.toISOString()}\n` +
+					`---\n\n` +
+					`Initial empty snapshot to initialize charts.`;
 
-					await this.app.vault.create(`${this.settings.snapshotsFolderPath}/${filename}`, content);
-					new Notice('Created initial snapshot file');
-				}
+				await this.app.vault.create(initialSnapshotPath, content);
+				new Notice('Created initial snapshot file');
 			}
 
 			// 1. Create Usage Guide
@@ -176,12 +183,7 @@ export default class PersonalFinancePlugin extends Plugin {
 					await this.app.vault.createFolder(templateDir);
 				}
 
-				// Inject the dynamic usage guide link
-				// Remove extension from path for the wiki link
-				const guideLinkPath = this.settings.usageGuideFilePath.replace(/\.md$/, '');
-				const templateContent = transactionTemplateContent.replace('{{USAGE_GUIDE_LINK}}', guideLinkPath);
-
-				await this.app.vault.create(this.settings.templateFilePath, templateContent);
+				await this.app.vault.create(this.settings.templateFilePath, transactionTemplateContent);
 				new Notice('Created default transaction template');
 			}
 
@@ -193,12 +195,23 @@ export default class PersonalFinancePlugin extends Plugin {
 				await this.app.vault.create(basePath, baseContent);
 			}
 
+			// 4. Create Seed Transaction (genesis block for the blockchain-linked ledger)
+			const seedPath = `${this.settings.transactionsFolderPath}/seed-transaction.md`;
+			if (!(await this.app.vault.adapter.exists(seedPath))) {
+				const seedDate = new Date().toISOString().slice(0, 16);
+				const seedHash = 'seed0000'; // Fixed genesis hash
+				const seedContent = `---\ncomment: Genesis seed transaction — do not edit\ndate: ${seedDate}\nhash: ${seedHash}\n${ACCOUNT_PREFIXES.TRANSACTION_ID}: 0\nis_valid: true\n---\n\n# Seed Transaction\nThis is the genesis block for the transaction integrity chain.\n`;
+				await this.app.vault.create(seedPath, seedContent);
+				new Notice('Created seed transaction (genesis block)');
+			}
+
 		} catch (error) {
 			console.error('Error ensuring file structure:', error);
 			new Notice('Error creating finance folders/template');
 		}
 	}
 }
+
 
 
 // Combined Modal
@@ -238,14 +251,10 @@ class RatesAndPricesModal extends Modal {
 		button.style.width = '100%';
 
 		button.addEventListener('click', async () => {
-			let rateUpdated = false;
-			let pricesUpdated = false;
-
 			// Process Rate
 			const newRate = parseFloat(rateInput.value);
 			if (!isNaN(newRate) && newRate > 0) {
 				this.plugin.settings.usdToInr = newRate;
-				rateUpdated = true;
 			}
 
 			// Process Prices
@@ -263,8 +272,7 @@ class RatesAndPricesModal extends Modal {
 				}
 
 				this.plugin.settings.commodityPrices = parsed;
-				pricesUpdated = true;
-			} catch (error) {
+			} catch {
 				new Notice('Invalid JSON in commodity prices');
 				return; // Stop if JSON is invalid
 			}
@@ -330,82 +338,80 @@ class ValidateTransactionsModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Validate Transactions' });
+		contentEl.createEl('h2', { text: 'Transaction Actions' });
 
 		contentEl.createEl('p', {
-			text: 'Choose how to validate your transactions:'
+			text: 'Choose a transaction action:'
 		});
 
-		// Option 1: Validate only invalid (GREEN)
+		// Option 1: Validate New Transactions (GREEN)
 		const option1Container = contentEl.createDiv({ cls: 'validation-option' });
-		option1Container.style.marginBottom = '15px';
+		option1Container.style.marginBottom = '20px';
 		option1Container.style.padding = '15px';
 		option1Container.style.border = '1px solid var(--background-modifier-border)';
 		option1Container.style.borderRadius = '8px';
 
-		option1Container.createEl('h4', { text: 'Validate Invalid Only' });
+		option1Container.createEl('h4', { text: 'Validate New Transactions' });
 		option1Container.createEl('p', {
-			text: 'Only checks transactions where is_valid is not true. Fast and efficient for most use cases.',
+			text: 'Finds transaction files without a hash (new/unlocked). Validates commodity prices and zero-sum rule, links to the previous valid transaction (blockchain-style), and locks valid transactions.',
 			cls: 'setting-item-description'
 		});
 
 		const validateInvalidBtn = option1Container.createEl('button', {
-			text: 'Validate Invalid Transactions'
+			text: 'Validate New Transactions'
 		});
 		validateInvalidBtn.style.width = '100%';
 		validateInvalidBtn.style.backgroundColor = '#28a745';
 		validateInvalidBtn.style.color = 'white';
 		validateInvalidBtn.addEventListener('click', async () => {
 			this.close();
-			await this.dashboardView.validateAllTransactions(false);
+			await this.dashboardView.validateInvalidTransactions();
 		});
 
-		// Option 2: Validate recent 50 transactions (BLUE)
+		// Option 2: Verify Transaction Integrity (BLUE/RED with input)
 		const option2Container = contentEl.createDiv({ cls: 'validation-option' });
-		option2Container.style.marginBottom = '15px';
 		option2Container.style.padding = '15px';
 		option2Container.style.border = '1px solid var(--background-modifier-border)';
 		option2Container.style.borderRadius = '8px';
 
-		option2Container.createEl('h4', { text: 'Validate Recent 50' });
+		option2Container.createEl('h4', { text: 'Verify Transaction Integrity' });
 		option2Container.createEl('p', {
-			text: 'Validates only the 50 most recently modified transaction files. Good for quick checks after recent edits.',
+			text: 'Uses checksum comparison to detect tampering. Verifies recent N transactions or all transactions (-1).',
 			cls: 'setting-item-description'
 		});
 
-		const validateRecentBtn = option2Container.createEl('button', {
-			text: 'Validate Recent 50 Transactions'
+		// Input for N
+		const inputContainer = option2Container.createDiv();
+		inputContainer.style.marginTop = '10px';
+		inputContainer.style.marginBottom = '10px';
+
+		const label = inputContainer.createEl('label', { text: 'Number of transactions to verify (use -1 for all): ' });
+		label.style.display = 'block';
+		label.style.marginBottom = '5px';
+
+		const input = inputContainer.createEl('input', {
+			type: 'number',
+			value: '50'
 		});
-		validateRecentBtn.style.width = '100%';
-		validateRecentBtn.style.backgroundColor = 'var(--interactive-accent)';
-		validateRecentBtn.style.color = 'white';
-		validateRecentBtn.addEventListener('click', async () => {
+		input.style.width = '100%';
+		input.style.padding = '5px';
+		input.min = '-1';
+
+		const verifyBtn = option2Container.createEl('button', {
+			text: 'Verify Transaction Integrity'
+		});
+		verifyBtn.style.width = '100%';
+		verifyBtn.style.marginTop = '10px';
+		verifyBtn.style.backgroundColor = 'var(--interactive-accent)';
+		verifyBtn.style.color = 'white';
+		verifyBtn.addEventListener('click', async () => {
+			const count = parseInt(input.value);
+			if (isNaN(count) || count < -1) {
+				new Notice('Please enter a valid number (-1 for all, or positive number)');
+				return;
+			}
 			this.close();
-			await this.dashboardView.validateRecentTransactions(50);
-		});
-
-		// Option 3: Force validate all (RED)
-		const option3Container = contentEl.createDiv({ cls: 'validation-option' });
-		option3Container.style.padding = '15px';
-		option3Container.style.border = '1px solid var(--background-modifier-border)';
-		option3Container.style.borderRadius = '8px';
-
-		option3Container.createEl('h4', { text: 'Force Validate All' });
-		const warningText = option3Container.createEl('p', {
-			text: '⚠️ Re-validates ALL transactions, even those already marked valid. This is an expensive operation that reads and modifies every transaction file.',
-			cls: 'setting-item-description'
-		});
-		warningText.style.color = 'var(--text-warning)';
-
-		const forceValidateBtn = option3Container.createEl('button', {
-			text: 'Force Validate All Transactions'
-		});
-		forceValidateBtn.style.width = '100%';
-		forceValidateBtn.style.backgroundColor = 'var(--text-error)';
-		forceValidateBtn.style.color = 'white';
-		forceValidateBtn.addEventListener('click', async () => {
-			this.close();
-			await this.dashboardView.validateAllTransactions(true);
+			await this.dashboardView.verifyTransactionIntegrity(count);
 		});
 	}
 
@@ -598,7 +604,7 @@ export class FinanceDashboardView extends BasesView {
 		return { categories, netWorth, lastUpdated: cache.lastUpdated };
 	}
 
-	public categorizeAccounts(): AccountCategory {
+	public categorizeAccounts(isForSnapshot: boolean = false): AccountCategory {
 		// ... (implementation same as before)
 		const categories: AccountCategory = {
 			assets: new Map(),
@@ -627,8 +633,9 @@ export class FinanceDashboardView extends BasesView {
 			// @ts-ignore
 			let sum = summaryValue.data;
 
-			// Apply commodity pricing with currency conversion if applicable
-			if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+			// Apply commodity pricing with currency conversion if applicable.
+			// Skip when isForSnapshot=true — snapshots store raw unit quantities, not monetary values.
+			if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY) && !isForSnapshot) {
 				const commodityName = name.replace(ACCOUNT_PREFIXES.COMMODITY, '');
 				const pricing = this.plugin.settings.commodityPrices[commodityName];
 				if (pricing) {
@@ -774,23 +781,6 @@ export class FinanceDashboardView extends BasesView {
 		return `${Math.floor(seconds / 86400)} days ago`;
 	}
 
-	private validateTransaction(entry: any, accountProps: string[]): boolean {
-		let sum = 0;
-
-		for (const prop of accountProps) {
-			// @ts-ignore
-			const value = entry.getValue(prop);
-			// @ts-ignore
-			if (value && value.data && typeof value.data === 'number') {
-				// @ts-ignore
-				sum += value.data;
-			}
-		}
-
-		// Allow small floating point tolerance
-		return Math.abs(sum) < 0.01;
-	}
-
 	private hasCommodity(entry: any, accountProps: string[]): boolean {
 		for (const prop of accountProps) {
 			// @ts-ignore
@@ -805,7 +795,88 @@ export class FinanceDashboardView extends BasesView {
 		return false;
 	}
 
-	public async validateAllTransactions(forceAll: boolean = false): Promise<void> {
+	// Compute transaction hash — covers all account props + date + prevHash (blockchain-style)
+	private computeTransactionHash(
+		accountProps: Record<string, number>,
+		date: string,
+		prevHash: string
+	): string {
+		const sortedKeys = Object.keys(accountProps).sort();
+		const data = sortedKeys.map(k => `${k}:${accountProps[k]}`).join('|')
+			+ `|date:${date}|prev:${prevHash}`;
+
+		// djb2-style hash (browser-compatible)
+		let hash = 0;
+		for (let i = 0; i < data.length; i++) {
+			const char = data.charCodeAt(i);
+			hash = ((hash << 5) - hash) + char;
+			hash = hash & hash; // 32-bit integer
+		}
+		return Math.abs(hash).toString(16).padStart(8, '0');
+	}
+
+	// Parse frontmatter text into a key→value record
+	private parseFrontmatter(frontmatter: string): Record<string, string> {
+		const obj: Record<string, string> = {};
+		for (const line of frontmatter.split('\n')) {
+			const colonIdx = line.indexOf(':');
+			if (colonIdx !== -1) {
+				const key = line.substring(0, colonIdx).trim();
+				const value = line.substring(colonIdx + 1).trim();
+				if (key) obj[key] = value;
+			}
+		}
+		return obj;
+	}
+
+	// Get commodity price — prioritize existing UnitPrice in file, then settings, then 1
+	private getCommodityPrice(commodityName: string, frontmatterObj: Record<string, string>): number {
+		const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+		if (frontmatterObj[unitPriceKey] !== undefined) {
+			const price = parseFloat(frontmatterObj[unitPriceKey]);
+			return isNaN(price) ? 1 : price;
+		}
+		const pricing = this.plugin.settings.commodityPrices[commodityName];
+		if (!pricing) return 1;
+		let price = pricing.value;
+		if (pricing.currency === '$' && this.plugin.settings.currencySymbol === '₹') {
+			price *= this.plugin.settings.usdToInr;
+		} else if (pricing.currency === '₹' && this.plugin.settings.currencySymbol === '$') {
+			price /= this.plugin.settings.usdToInr;
+		}
+		return price;
+	}
+
+	// Find the valid transaction with the highest transaction_id (chain tip)
+	private async findLastValidTransaction(): Promise<{ file: TFile; hash: string; transaction_id: number } | null> {
+		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
+		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
+		if (!(folder instanceof TFolder)) return null;
+
+		const allFiles = folder.children.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
+
+		let best: { file: TFile; hash: string; transaction_id: number } | null = null;
+
+		for (const file of allFiles) {
+			const content = await this.plugin.app.vault.read(file);
+			const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+			if (!fmMatch) continue;
+			const fm = this.parseFrontmatter(fmMatch[1] || '');
+			if (fm['is_valid'] !== 'true' || !fm[ACCOUNT_PREFIXES.HASH]) continue;
+			const txId = parseInt(fm[ACCOUNT_PREFIXES.TRANSACTION_ID] ?? '', 10);
+			if (isNaN(txId)) continue;
+			if (best === null || txId > best.transaction_id) {
+				best = { file, hash: fm[ACCOUNT_PREFIXES.HASH]!, transaction_id: txId };
+			}
+		}
+
+		return best;
+	}
+
+	// ─── Validate New Transactions ───────────────────────────────────────────────
+
+	// Entry point: find files without a hash (new/unlocked), sort by ctime asc, validate each
+	public async validateInvalidTransactions(): Promise<void> {
 		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
 		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
 
@@ -814,103 +885,173 @@ export class FinanceDashboardView extends BasesView {
 			return;
 		}
 
-		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
-		let filesToProcess: TFile[] = allFiles;
+		const allFiles = folder.children.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
+		const filesToProcess: TFile[] = [];
 
-		// If not forcing all, only process files that need validation
-		if (!forceAll) {
-			filesToProcess = [];
-			for (const file of allFiles) {
-				const content = await this.plugin.app.vault.read(file);
-				// Check if is_valid is not explicitly true
-				if (!content.includes('is_valid: true')) {
-					filesToProcess.push(file);
-				}
+		for (const file of allFiles) {
+			const content = await this.plugin.app.vault.read(file);
+			// A file is "new" if it has no hash property in frontmatter
+			if (!content.match(/^hash:\s*\S/m)) {
+				filesToProcess.push(file);
 			}
 		}
 
+		// Oldest creation time first (process in chronological order for correct chain linking)
+		filesToProcess.sort((a, b) => a.stat.ctime - b.stat.ctime);
+
+		if (filesToProcess.length === 0) {
+			new Notice('No new transactions to validate.');
+			return;
+		}
+
+		await this.validateTransaction(filesToProcess);
+	}
+
+	// Core validation: commodity checks → zero-sum → blockchain link → hash → lock
+	private async validateTransaction(filesToProcess: TFile[]): Promise<void> {
 		let validCount = 0;
 		let invalidCount = 0;
 
-		new Notice(`Validating ${filesToProcess.length} transactions...`);
+		new Notice(`Validating ${filesToProcess.length} new transaction(s)…`);
 
 		for (const file of filesToProcess) {
 			try {
 				const content = await this.plugin.app.vault.read(file);
-				// Handle both CRLF (Windows) and LF (Unix) line endings
-				const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+				const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+				if (!fmMatch) continue;
 
-				if (!frontmatterMatch) continue;
+				const rawFm = fmMatch[1] || '';
+				const fmObj = this.parseFrontmatter(rawFm);
+				const bodyContent = content.substring(fmMatch[0].length);
 
-				const frontmatter = frontmatterMatch[1] || '';
-				const lines = frontmatter.split('\n');
+				// Build clean lines — strip any existing validation/computed fields before re-processing
+				const STRIP_FIELDS = new Set(['hash', 'is_valid', 'Invalid_reason',
+					'prev_valid_transaction', 'Prev_valid_transaction_hash', 'integrity_error',
+					'transaction_id']);
+				const baseLines = rawFm.split('\n').filter(line => {
+					const trimmed = line.trim();
+					const colonIdx = trimmed.indexOf(':');
+					const key = colonIdx !== -1 ? trimmed.substring(0, colonIdx).trim() : trimmed;
+					return !STRIP_FIELDS.has(key);
+				});
 
-				// Calculate sum of all account properties
-				let sum = 0;
-				let hasCommodity = false;
-				const newLines: string[] = [];
-				let hasIsValid = false;
+				// ── Step 1: Commodity price logic ─────────────────────────────
+				const commodityProps: Record<string, number> = {};
+				const unitPriceProps: Record<string, number> = {};
+				const commodityPriceErrors: string[] = [];
 
-				for (const line of lines) {
-					const colonIndex = line.indexOf(':');
-					if (colonIndex === -1) {
-						newLines.push(line);
-						continue;
+				for (const line of baseLines) {
+					const colonIdx = line.indexOf(':');
+					if (colonIdx === -1) continue;
+					const key = line.substring(0, colonIdx).trim();
+					const value = line.substring(colonIdx + 1).trim();
+					if (key.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						const name = key.substring(ACCOUNT_PREFIXES.COMMODITY.length);
+						const qty = parseFloat(value);
+						if (!isNaN(qty)) commodityProps[name] = qty;
 					}
-
-					const key = line.substring(0, colonIndex).trim();
-					const value = line.substring(colonIndex + 1).trim();
-
-					// Skip is_valid line, we'll add it at the end
-					if (key === 'is_valid') {
-						hasIsValid = true;
-						continue;
-					}
-
-					// Check if this is an account property
-					if (key.startsWith('Asset-') || key.startsWith('Liability-') ||
-						key.startsWith('Expense-') || key.startsWith('Income-')) {
-						const numValue = parseFloat(value);
-						if (!isNaN(numValue)) {
-							sum += numValue;
-						}
-					} else if (key.startsWith('Commodity-')) {
-						hasCommodity = true;
-					}
-
-					newLines.push(line);
 				}
 
-				// Determine validity (commodities are always valid, others need sum = 0)
-				const isValid = hasCommodity || Math.abs(sum) < 0.01;
+				for (const commodityName of Object.keys(commodityProps)) {
+					const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+					if (fmObj[unitPriceKey] !== undefined) {
+						const p = parseFloat(fmObj[unitPriceKey]);
+						unitPriceProps[commodityName] = isNaN(p) ? 1 : p;
+					} else {
+						const price = this.getCommodityPrice(commodityName, fmObj);
+						unitPriceProps[commodityName] = price;
+						baseLines.push(`${unitPriceKey}: ${price}`);
+						// Track missing-price commodities (price fell back to 1)
+						const hasSetting = !!this.plugin.settings.commodityPrices[commodityName];
+						if (!hasSetting) commodityPriceErrors.push(commodityName);
+					}
+				}
 
-				// Add is_valid property
-				newLines.push(`is_valid: ${isValid}`);
-
-				// Reconstruct content
-				const newFrontmatter = newLines.join('\n');
-				const bodyContent = content.substring(frontmatterMatch[0].length);
-				const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
-
-				// Only update if content changed
-				if (newContent !== content) {
+				if (commodityPriceErrors.length > 0) {
+					const reason = `Commodity price error ${commodityPriceErrors.join(' ')}`;
+					baseLines.push(`${ACCOUNT_PREFIXES.INVALID_REASON}: ${reason}`);
+					baseLines.push(`is_valid: false`);
+					const newContent = `---\n${baseLines.join('\n')}\n---${bodyContent}`;
 					await this.plugin.app.vault.modify(file, newContent);
+					invalidCount++;
+					continue;
 				}
 
-				if (isValid) {
-					validCount++;
-				} else {
-					invalidCount++;
+				// ── Step 2: Zero-sum logic ────────────────────────────────────
+				let simpleSum = 0;
+				let commoditySum = 0;
+				const accountProps: Record<string, number> = {};
+
+				for (const line of baseLines) {
+					const colonIdx = line.indexOf(':');
+					if (colonIdx === -1) continue;
+					const key = line.substring(0, colonIdx).trim();
+					const value = line.substring(colonIdx + 1).trim();
+					const num = parseFloat(value);
+					if (isNaN(num)) continue;
+
+					if (key.startsWith(ACCOUNT_PREFIXES.ASSET) ||
+						key.startsWith(ACCOUNT_PREFIXES.LIABILITY) ||
+						key.startsWith(ACCOUNT_PREFIXES.EXPENSE) ||
+						key.startsWith(ACCOUNT_PREFIXES.INCOME)) {
+						simpleSum += num;
+						accountProps[key] = num;
+					} else if (key.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						const name = key.substring(ACCOUNT_PREFIXES.COMMODITY.length);
+						commoditySum += num * (unitPriceProps[name] ?? 1);
+						accountProps[key] = num;
+					} else if (key.startsWith(ACCOUNT_PREFIXES.UNIT_PRICE)) {
+						accountProps[key] = num;
+					}
 				}
+
+				const totalSum = simpleSum + commoditySum;
+
+				if (Math.abs(totalSum) >= 0.01) {
+					const reason = `0 sum error total sum should be 0 but it is ${totalSum.toFixed(2)}`;
+					baseLines.push(`${ACCOUNT_PREFIXES.INVALID_REASON}: ${reason}`);
+					baseLines.push(`is_valid: false`);
+					const newContent = `---\n${baseLines.join('\n')}\n---${bodyContent}`;
+					await this.plugin.app.vault.modify(file, newContent);
+					invalidCount++;
+					continue;
+				}
+
+				// ── Step 3: Blockchain linking ────────────────────────────────
+				const prevTx = await this.findLastValidTransaction();
+				const prevHash = prevTx ? prevTx.hash : 'seed0000';
+				const prevLink = prevTx ? prevTx.file.basename : 'seed-transaction';
+
+				baseLines.push(`${ACCOUNT_PREFIXES.PREV_VALID_TX}: "[[${prevLink}]]"`);
+				baseLines.push(`${ACCOUNT_PREFIXES.PREV_VALID_TX_HASH}: ${prevHash}`);
+
+				// ── Step 4: Compute hash & assign transaction_id ──────────────
+				const date = fmObj['date'] ?? '';
+				const txHash = this.computeTransactionHash(accountProps, date, prevHash);
+				const newTxId = prevTx !== null ? prevTx.transaction_id + 1 : 1;
+
+				baseLines.push(`${ACCOUNT_PREFIXES.HASH}: ${txHash}`);
+				baseLines.push(`${ACCOUNT_PREFIXES.TRANSACTION_ID}: ${newTxId}`);
+				baseLines.push(`is_valid: true`);
+
+				const newContent = `---\n${baseLines.join('\n')}\n---${bodyContent}`;
+				await this.plugin.app.vault.modify(file, newContent);
+				validCount++;
+
 			} catch (error) {
-				console.error(`Error validating ${file.path}:`, error);
+				console.error(`Error validating ${file.path}: `, error);
+				new Notice(`Error validating ${file.basename}`);
 			}
 		}
 
 		new Notice(`Validation complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`);
 	}
 
-	public async validateRecentTransactions(count: number): Promise<void> {
+	// ─── Verify Transaction Integrity ────────────────────────────────────────────
+
+
+	// Blockchain chain-walk: latest → oldest, verifying hash + chain link at each step
+	public async verifyTransactionIntegrity(verification_depth: number): Promise<void> {
 		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
 		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
 
@@ -919,80 +1060,192 @@ export class FinanceDashboardView extends BasesView {
 			return;
 		}
 
-		const allFiles = folder.children.filter((file) => file instanceof TFile && file.extension === 'md') as TFile[];
+		const allFiles = folder.children.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
 
-		// Sort by mtime descending (most recent first)
-		allFiles.sort((a, b) => b.stat.mtime - a.stat.mtime);
-
-		// Take only the top N files
-		const filesToProcess = allFiles.slice(0, count);
-		let validCount = 0;
-		let invalidCount = 0;
-
-		new Notice(`Validating ${filesToProcess.length} recent transactions...`);
-
-		for (const file of filesToProcess) {
-			try {
-				const content = await this.plugin.app.vault.read(file);
-				const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-
-				if (!frontmatterMatch) continue;
-
-				const frontmatter = frontmatterMatch[1] || '';
-				const lines = frontmatter.split('\n');
-
-				let sum = 0;
-				let hasCommodity = false;
-				const newLines: string[] = [];
-
-				for (const line of lines) {
-					const colonIndex = line.indexOf(':');
-					if (colonIndex === -1) {
-						newLines.push(line);
-						continue;
-					}
-
-					const key = line.substring(0, colonIndex).trim();
-					const value = line.substring(colonIndex + 1).trim();
-
-					if (key === 'is_valid') continue;
-
-					if (key.startsWith('Asset-') || key.startsWith('Liability-') ||
-						key.startsWith('Expense-') || key.startsWith('Income-')) {
-						const numValue = parseFloat(value);
-						if (!isNaN(numValue)) {
-							sum += numValue;
-						}
-					} else if (key.startsWith('Commodity-')) {
-						hasCommodity = true;
-					}
-
-					newLines.push(line);
-				}
-
-				const isValid = hasCommodity || Math.abs(sum) < 0.01;
-				newLines.push(`is_valid: ${isValid}`);
-
-				const newFrontmatter = newLines.join('\n');
-				const bodyContent = content.substring(frontmatterMatch[0].length);
-				const newContent = `---\n${newFrontmatter}\n---${bodyContent}`;
-
-				if (newContent !== content) {
-					await this.plugin.app.vault.modify(file, newContent);
-				}
-
-				if (isValid) {
-					validCount++;
-				} else {
-					invalidCount++;
-				}
-			} catch (error) {
-				console.error(`Error validating ${file.path}:`, error);
+		// Collect valid+hashed transactions, excluding the seed (its hash is fixed, not computed)
+		const validTxFiles: TFile[] = [];
+		for (const file of allFiles) {
+			if (file.basename === 'seed-transaction') continue; // skip genesis block
+			const content = await this.plugin.app.vault.read(file);
+			if (content.match(/^is_valid:\s*true/m) && content.match(/^hash:\s*\S/m)) {
+				validTxFiles.push(file);
 			}
 		}
 
-		new Notice(`Validation complete! ✓ ${validCount} valid, ✗ ${invalidCount} invalid`);
+		if (validTxFiles.length === 0) {
+			new Notice('No validated transactions found to verify.');
+			return;
+		}
+
+		// Sort by transaction_id descending; chain head is the tx with the highest id
+		const txIdCache = new Map<string, number>();
+		for (const file of validTxFiles) {
+			const content = await this.plugin.app.vault.read(file);
+			const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+			const fm = fmMatch ? this.parseFrontmatter(fmMatch[1] || '') : {};
+			const txId = parseInt(fm[ACCOUNT_PREFIXES.TRANSACTION_ID] ?? '', 10);
+			txIdCache.set(file.path, isNaN(txId) ? -1 : txId);
+		}
+		validTxFiles.sort((a, b) => (txIdCache.get(b.path) ?? -1) - (txIdCache.get(a.path) ?? -1));
+
+		const depth = verification_depth === -1
+			? validTxFiles.length
+			: Math.min(verification_depth, validTxFiles.length);
+
+		new Notice(`Verifying ${depth} transaction(s)…`);
+
+		const blockchainEnabled = this.plugin.settings.blockchainEnabled;
+
+		if (blockchainEnabled) {
+			// ── Chain-walk mode: traverse linked list newest → oldest ──────────
+			let headPath = validTxFiles[0]!.path;
+			let count = 0;
+			let verifiedCount = 0;
+			let foundError = false;
+
+			while (count < depth) {
+				const headFile = this.plugin.app.vault.getAbstractFileByPath(headPath);
+				if (!(headFile instanceof TFile)) break;
+
+				const result = await this.verifySingleTransaction(headFile, true);
+
+				if (!result.ok) {
+					new Notice(`⚠️ Chain broken at: ${headFile.basename}\n${result.errorMsg}`, 8000);
+					foundError = true;
+					break;
+				}
+
+				verifiedCount++;
+				count++;
+
+				if (!result.prevPath) break; // Reached genesis
+				headPath = result.prevPath;
+			}
+
+			if (!foundError) {
+				new Notice(`✓ Integrity verified: ${verifiedCount} transaction(s) intact.`);
+			}
+		} else {
+			// ── Standalone mode: verify each transaction independently (hash only) ──
+			let okCount = 0;
+			let failCount = 0;
+			for (const file of validTxFiles.slice(0, depth)) {
+				const result = await this.verifySingleTransaction(file, false);
+				if (result.ok) { okCount++; } else { failCount++; }
+			}
+			new Notice(failCount > 0
+				? `⚠️ ${failCount} tampered transaction(s) found. ✓ ${okCount} intact.`
+				: `✓ All ${okCount} transaction(s) intact.`);
+		}
 	}
+
+	// Verify a single transaction: recompute hash, check stored hash, optionally verify prev chain link
+	private async verifySingleTransaction(file: TFile, checkChain = true): Promise<{
+		ok: boolean;
+		errorMsg?: string;
+		prevPath?: string;
+	}> {
+		try {
+			const content = await this.plugin.app.vault.read(file);
+			const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+			if (!fmMatch) return { ok: false, errorMsg: 'No frontmatter found' };
+
+			const fm = this.parseFrontmatter(fmMatch[1] || '');
+			const storedHash = fm[ACCOUNT_PREFIXES.HASH];
+			const storedPrevHash = fm[ACCOUNT_PREFIXES.PREV_VALID_TX_HASH];
+			const date = fm['date'] ?? '';
+
+			if (!storedHash) return { ok: false, errorMsg: 'No hash property found' };
+
+			// Rebuild accountProps
+			const accountProps: Record<string, number> = {};
+			for (const [key, value] of Object.entries(fm)) {
+				if (key.startsWith(ACCOUNT_PREFIXES.ASSET) ||
+					key.startsWith(ACCOUNT_PREFIXES.LIABILITY) ||
+					key.startsWith(ACCOUNT_PREFIXES.EXPENSE) ||
+					key.startsWith(ACCOUNT_PREFIXES.INCOME) ||
+					key.startsWith(ACCOUNT_PREFIXES.COMMODITY) ||
+					key.startsWith(ACCOUNT_PREFIXES.UNIT_PRICE)) {
+					const num = parseFloat(value);
+					if (!isNaN(num)) accountProps[key] = num;
+				}
+			}
+
+			const prevHashForCompute = storedPrevHash ?? 'seed0000';
+			const computedHash = this.computeTransactionHash(accountProps, date, prevHashForCompute);
+
+			if (computedHash !== storedHash) {
+				await this.markTxIntegrityError(file, fmMatch[1] || '',
+					content.substring(fmMatch[0].length),
+					`Hash mismatch — computed ${computedHash} stored ${storedHash}`);
+				return {
+					ok: false,
+					errorMsg: `Hash mismatch — file may have been tampered.\nComputed: ${computedHash}\nStored:   ${storedHash}`
+				};
+			}
+
+			// If chain verification is disabled, stop here — hash matches, tx is intact
+			if (!checkChain) return { ok: true };
+
+			// Verify the prev chain link
+			const prevTxRaw = fm[ACCOUNT_PREFIXES.PREV_VALID_TX]; // e.g. [[seed-transaction]]
+			if (!prevTxRaw) return { ok: true }; // No prev link — genesis
+
+
+			// Strip surrounding quotes (Obsidian may add them for YAML validity) and [[ ]] brackets
+			const prevBasename = prevTxRaw.replace(/^"|"$/g, '').replace(/^\[\[/, '').replace(/\]\]$/, '');
+
+			if (prevBasename === 'seed-transaction') {
+				return { ok: true }; // Reached genesis — chain complete
+			}
+
+			const transactionsFolder = this.plugin.settings.transactionsFolderPath;
+			const prevFilePath = `${transactionsFolder}/${prevBasename}.md`;
+			const prevFile = this.plugin.app.vault.getAbstractFileByPath(prevFilePath);
+
+			if (!(prevFile instanceof TFile)) {
+				return { ok: false, errorMsg: `Previous transaction not found: ${prevBasename}` };
+			}
+
+			// Check that prev file's actual hash == what we recorded in Prev_valid_transaction_hash
+			const prevContent = await this.plugin.app.vault.read(prevFile);
+			const prevFmMatch = prevContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+			if (!prevFmMatch) return { ok: false, errorMsg: `No frontmatter in prev tx: ${prevBasename}` };
+			const prevFm = this.parseFrontmatter(prevFmMatch[1] || '');
+			const prevActualHash = prevFm[ACCOUNT_PREFIXES.HASH];
+
+			if (prevActualHash !== storedPrevHash) {
+				await this.markTxIntegrityError(file, fmMatch[1] || '',
+					content.substring(fmMatch[0].length),
+					`Chain broken — prev tx hash changed. Recorded ${storedPrevHash} actual ${prevActualHash}`);
+				return {
+					ok: false,
+					errorMsg: `Chain broken at ${file.basename}.\nRecorded prev hash: ${storedPrevHash}\nActual prev hash:   ${prevActualHash}`
+				};
+			}
+
+			return { ok: true, prevPath: prevFile.path };
+
+		} catch (error) {
+			console.error(`Error verifying ${file.path}: `, error);
+			return { ok: false, errorMsg: `Exception: ${String(error)}` };
+		}
+	}
+
+	// Helper: mark a transaction invalid with an integrity_error field
+	private async markTxIntegrityError(file: TFile, rawFm: string, bodyContent: string, msg: string): Promise<void> {
+		const lines = rawFm.split('\n').filter(l => {
+			const trimmed = l.trim();
+			const colonIdx = trimmed.indexOf(':');
+			const k = colonIdx !== -1 ? trimmed.substring(0, colonIdx).trim() : trimmed;
+			return k !== 'is_valid' && k !== ACCOUNT_PREFIXES.INTEGRITY_ERROR;
+		});
+		lines.push(`is_valid: false`);
+		lines.push(`${ACCOUNT_PREFIXES.INTEGRITY_ERROR}: ${msg}`);
+		await this.plugin.app.vault.modify(file, `---\n${lines.join('\n')}\n---${bodyContent}`);
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	private async logTransaction(): Promise<void> {
 		try {
@@ -1090,7 +1343,7 @@ export class FinanceDashboardView extends BasesView {
 						nameDiv.createSpan({ text: ` (${units.toFixed(2)} units)`, cls: 'commodity-units' });
 					}
 
-					const valueSpan = row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value positive' });
+					row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value positive' });
 
 					// Add pricing formula
 					if (pricing) {
@@ -1310,7 +1563,7 @@ export class FinanceDashboardView extends BasesView {
 					nameDiv.createSpan({ text: ` (${units.toFixed(2)} units)`, cls: 'commodity-units' });
 				}
 
-				const valueSpan = row.createSpan({
+				row.createSpan({
 					text: formatCurrency(value, this.plugin.settings.currencySymbol),
 					cls: valueClass
 				});
@@ -1584,6 +1837,44 @@ export class FinanceDashboardView extends BasesView {
 		}
 	}
 
+	// Collect raw frontmatter from every transaction file so we can embed them in the snapshot
+	private async collectTransactionFrontmatters(): Promise<Record<string, unknown>[]> {
+		const txFolder = this.plugin.settings.transactionsFolderPath;
+		const folder = this.plugin.app.vault.getAbstractFileByPath(txFolder);
+		if (!(folder instanceof TFolder)) return [];
+
+		const result: Record<string, unknown>[] = [];
+
+		const files = folder.children
+			.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
+
+		// Sort by file creation time ascending so the JSON list is chronological
+		files.sort((a, b) => (a.stat?.ctime ?? 0) - (b.stat?.ctime ?? 0));
+
+		for (const file of files) {
+			try {
+				const content = await this.plugin.app.vault.read(file);
+				const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+				if (!fmMatch) continue;
+
+				// Parse frontmatter into a key->value map (raw strings)
+				const rawObj = this.parseFrontmatter(fmMatch[1] || '');
+
+				// Coerce numeric-looking values to numbers for richer JSON
+				const obj: Record<string, unknown> = { _file: file.basename };
+				for (const [k, v] of Object.entries(rawObj)) {
+					const num = Number(v);
+					obj[k] = !isNaN(num) && v.trim() !== '' ? num : v;
+				}
+				result.push(obj);
+			} catch (e) {
+				console.error(`[Snapshot] Failed to read tx file ${file.path}:`, e);
+			}
+		}
+
+		return result;
+	}
+
 	private createSnapshotButton(categories: AccountCategory): void {
 		const buttonContainer = this.containerEl.createDiv('snapshot-button-container');
 		const button = buttonContainer.createEl('button', {
@@ -1606,7 +1897,8 @@ export class FinanceDashboardView extends BasesView {
 				await this.plugin.app.vault.createFolder(folderPath);
 			}
 
-			// Create frontmatter with all accounts
+			// Build frontmatter from provided categories (caller is responsible for passing
+			// categorizeAccounts(true) so Commodity values are raw unit quantities, not monetary)
 			const frontmatter: Record<string, number> = {};
 
 			for (const [name, value] of categories.assets) {
@@ -1622,6 +1914,31 @@ export class FinanceDashboardView extends BasesView {
 				frontmatter[name] = value;
 			}
 
+			// For every Commodity-X in the snapshot, also record the UnitPrice-X at snapshot time
+			// Price is stored in the user's configured currency (currency conversion applied)
+			// so the snapshot is self-contained: qty × UnitPrice = monetary value in local currency
+			const allCategoryMaps = [categories.assets, categories.liabilities, categories.income, categories.expenses];
+			for (const map of allCategoryMaps) {
+				for (const [name] of map) {
+					if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
+						const commodityName = name.replace(ACCOUNT_PREFIXES.COMMODITY, '');
+						const pricing = this.plugin.settings.commodityPrices[commodityName];
+						const unitPriceKey = `${ACCOUNT_PREFIXES.UNIT_PRICE}${commodityName}`;
+						if (pricing) {
+							let price = pricing.value;
+							if (pricing.currency === '$' && this.plugin.settings.currencySymbol === '₹') {
+								price *= this.plugin.settings.usdToInr;
+							} else if (pricing.currency === '₹' && this.plugin.settings.currencySymbol === '$') {
+								price /= this.plugin.settings.usdToInr;
+							}
+							frontmatter[unitPriceKey] = price;
+						} else {
+							frontmatter[unitPriceKey] = 1; // no pricing configured, treat as face value
+						}
+					}
+				}
+			}
+
 			// Add date
 			const now = new Date();
 			const dateStr = now.toISOString();
@@ -1634,7 +1951,19 @@ export class FinanceDashboardView extends BasesView {
 			yamlLines.push(`date: ${dateStr}`);
 			yamlLines.push('---');
 			yamlLines.push('');
+
+			// Collect raw transaction frontmatters for the JSON ledger dump
+			const txRecords = await this.collectTransactionFrontmatters();
+			const jsonDump = JSON.stringify(txRecords, null, 2);
+
 			yamlLines.push(`Snapshot taken at: ${now.toLocaleString()}`);
+			yamlLines.push('');
+			yamlLines.push('## Transaction Ledger');
+			yamlLines.push('');
+			yamlLines.push('<!-- raw transaction frontmatter data — do not edit manually -->');
+			yamlLines.push('```json');
+			yamlLines.push(jsonDump);
+			yamlLines.push('```');
 
 			const content = yamlLines.join('\n');
 
@@ -1679,6 +2008,22 @@ export class FinanceDashboardView extends BasesView {
 					let assets = 0;
 					let liabilities = 0;
 
+					// Pass 1: collect UnitPrice- values stored in this snapshot
+					// These are the historical prices at time of snapshot creation
+					const snapshotUnitPrices: Record<string, number> = {};
+					for (const line of lines) {
+						const colonIndex = line.indexOf(':');
+						if (colonIndex === -1) continue;
+						const key = line.substring(0, colonIndex).trim();
+						const value = line.substring(colonIndex + 1).trim();
+						if (key.startsWith('UnitPrice-')) {
+							const commodityName = key.replace('UnitPrice-', '');
+							const price = parseFloat(value);
+							if (!isNaN(price)) snapshotUnitPrices[commodityName] = price;
+						}
+					}
+
+					// Pass 2: accumulate asset/liability totals
 					// @ts-ignore
 					for (const line of lines) {
 						const colonIndex = line.indexOf(':');
@@ -1689,8 +2034,30 @@ export class FinanceDashboardView extends BasesView {
 
 						if (key === 'date') {
 							date = new Date(value);
-						} else if (key.startsWith('Asset-') || key.startsWith('Commodity-')) {
+						} else if (key.startsWith('Asset-')) {
 							assets += parseFloat(value) || 0;
+						} else if (key.startsWith('Commodity-')) {
+							const commodityName = key.replace('Commodity-', '');
+							const qty = parseFloat(value) || 0;
+
+							// Prefer the UnitPrice stored in this snapshot (historical price);
+							// fall back to current settings price if snapshot pre-dates this feature
+							if (snapshotUnitPrices[commodityName] !== undefined) {
+								assets += qty * snapshotUnitPrices[commodityName];
+							} else {
+								const pricing = this.plugin.settings.commodityPrices[commodityName];
+								if (pricing) {
+									let price = pricing.value;
+									if (pricing.currency === '$' && this.plugin.settings.currencySymbol === '₹') {
+										price *= this.plugin.settings.usdToInr;
+									} else if (pricing.currency === '₹' && this.plugin.settings.currencySymbol === '$') {
+										price /= this.plugin.settings.usdToInr;
+									}
+									assets += qty * price;
+								} else {
+									assets += qty; // no pricing at all, treat as face value
+								}
+							}
 						} else if (key.startsWith('Liability-')) {
 							liabilities += parseFloat(value) || 0;
 						}
@@ -1736,8 +2103,8 @@ export class FinanceDashboardView extends BasesView {
 		snapshotIcon.textContent = '+';
 		snapshotBtn.createSpan({ text: ' Add Snapshot' });
 		snapshotBtn.addEventListener('click', async () => {
-			// categorizesAccounts returns AccountCategory which is what createSnapshot expects
-			await this.createSnapshot(this.categorizeAccounts());
+			// Pass isForSnapshot=true so Commodity values are stored as raw unit quantities
+			await this.createSnapshot(this.categorizeAccounts(true));
 		});
 
 		const canvas = chartContainer.createEl('canvas');
