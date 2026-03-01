@@ -18,6 +18,7 @@ export interface FinancePluginSettings {
 	usageGuideFilePath: string;
 	dashboardDataPath: string;
 	financeBasePath: string;
+	blockchainEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: FinancePluginSettings = {
@@ -31,7 +32,8 @@ export const DEFAULT_SETTINGS: FinancePluginSettings = {
 	templateFilePath: 'Finance/Templates/Transaction.md',
 	usageGuideFilePath: 'Finance/Personal-finances-usage-guide.md',
 	dashboardDataPath: 'Finance/dashboard-data.json',
-	financeBasePath: 'Finance/Finances.base'
+	financeBasePath: 'Finance/Finances.base',
+	blockchainEnabled: true,
 }
 
 export class FinanceSettingTab extends PluginSettingTab {
@@ -89,7 +91,7 @@ export class FinanceSettingTab extends PluginSettingTab {
 							const parsed = JSON.parse(value);
 							this.plugin.settings.commodityPrices = parsed;
 							await this.plugin.saveSettings();
-						} catch (e) {
+						} catch {
 							// Invalid JSON, don't save
 						}
 					});
@@ -177,6 +179,18 @@ export class FinanceSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.financeBasePath)
 				.onChange(async (value) => {
 					this.plugin.settings.financeBasePath = value;
+					await this.plugin.saveSettings();
+				}));
+		// Transaction Integrity Section
+		containerEl.createEl('h3', { text: 'Transaction Integrity' });
+
+		new Setting(containerEl)
+			.setName('Blockchain-Linked Verification')
+			.setDesc('When enabled, Verify Transaction Integrity walks the full chain (each tx links to the previous one). When disabled, each transaction is verified independently — only its own hash is checked.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.blockchainEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.blockchainEnabled = value;
 					await this.plugin.saveSettings();
 				}));
 	}

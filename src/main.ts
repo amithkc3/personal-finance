@@ -1,4 +1,4 @@
-import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, TAbstractFile, setIcon } from 'obsidian';
+import { App, Plugin, BasesView, parsePropertyId, Modal, Notice, TFile, TFolder, setIcon } from 'obsidian';
 import { DEFAULT_SETTINGS, FinancePluginSettings, FinanceSettingTab } from "./settings";
 import { createPieChart, formatCurrency, createNetWorthLineChart, SnapshotDataPoint } from "./utils/charts";
 
@@ -257,14 +257,10 @@ class RatesAndPricesModal extends Modal {
 		button.style.width = '100%';
 
 		button.addEventListener('click', async () => {
-			let rateUpdated = false;
-			let pricesUpdated = false;
-
 			// Process Rate
 			const newRate = parseFloat(rateInput.value);
 			if (!isNaN(newRate) && newRate > 0) {
 				this.plugin.settings.usdToInr = newRate;
-				rateUpdated = true;
 			}
 
 			// Process Prices
@@ -282,8 +278,7 @@ class RatesAndPricesModal extends Modal {
 				}
 
 				this.plugin.settings.commodityPrices = parsed;
-				pricesUpdated = true;
-			} catch (error) {
+			} catch {
 				new Notice('Invalid JSON in commodity prices');
 				return; // Stop if JSON is invalid
 			}
@@ -386,7 +381,7 @@ class ValidateTransactionsModal extends Modal {
 		option2Container.style.borderRadius = '8px';
 
 		option2Container.createEl('h4', { text: 'Verify Transaction Integrity' });
-		const desc = option2Container.createEl('p', {
+		option2Container.createEl('p', {
 			text: 'Uses checksum comparison to detect tampering. Verifies recent N transactions or all transactions (-1).',
 			cls: 'setting-item-description'
 		});
@@ -863,7 +858,7 @@ export class FinanceDashboardView extends BasesView {
 		const folder = this.plugin.app.vault.getAbstractFileByPath(transactionsFolder);
 		if (!(folder instanceof TFolder)) return null;
 
-		const allFiles = folder.children.filter(f => f instanceof TFile && (f as TFile).extension === 'md') as TFile[];
+		const allFiles = folder.children.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
 		allFiles.sort((a, b) => b.stat.mtime - a.stat.mtime);
 
 		for (const file of allFiles) {
@@ -890,7 +885,7 @@ export class FinanceDashboardView extends BasesView {
 			return;
 		}
 
-		const allFiles = folder.children.filter(f => f instanceof TFile && (f as TFile).extension === 'md') as TFile[];
+		const allFiles = folder.children.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
 		const filesToProcess: TFile[] = [];
 
 		for (const file of allFiles) {
@@ -1012,7 +1007,7 @@ export class FinanceDashboardView extends BasesView {
 				const totalSum = simpleSum + commoditySum;
 
 				if (Math.abs(totalSum) >= 0.01) {
-					const reason = `0 sum error ${totalSum.toFixed(2)}`;
+					const reason = `0 sum error total sum should be 0 but it is ${totalSum.toFixed(2)}`;
 					baseLines.push(`${ACCOUNT_PREFIXES.INVALID_REASON}: ${reason}`);
 					baseLines.push(`is_valid: false`);
 					const newContent = `---\n${baseLines.join('\n')}\n---${bodyContent}`;
@@ -1051,6 +1046,7 @@ export class FinanceDashboardView extends BasesView {
 
 	// ─── Verify Transaction Integrity ────────────────────────────────────────────
 
+
 	// Blockchain chain-walk: latest → oldest, verifying hash + chain link at each step
 	public async verifyTransactionIntegrity(verification_depth: number): Promise<void> {
 		const transactionsFolder = this.plugin.settings.transactionsFolderPath;
@@ -1061,7 +1057,7 @@ export class FinanceDashboardView extends BasesView {
 			return;
 		}
 
-		const allFiles = folder.children.filter(f => f instanceof TFile && (f as TFile).extension === 'md') as TFile[];
+		const allFiles = folder.children.filter((f): f is TFile => f instanceof TFile && f.extension === 'md');
 
 		// Collect valid+hashed transactions, excluding the seed (its hash is fixed, not computed)
 		const validTxFiles: TFile[] = [];
@@ -1087,37 +1083,53 @@ export class FinanceDashboardView extends BasesView {
 
 		new Notice(`Verifying ${depth} transaction(s)…`);
 
-		let headPath = validTxFiles[0]!.path;
-		let count = 0;
-		let verifiedCount = 0;
-		let foundError = false;
+		const blockchainEnabled = this.plugin.settings.blockchainEnabled;
 
-		while (count < depth) {
-			const headFile = this.plugin.app.vault.getAbstractFileByPath(headPath);
-			if (!(headFile instanceof TFile)) break;
+		if (blockchainEnabled) {
+			// ── Chain-walk mode: traverse linked list newest → oldest ──────────
+			let headPath = validTxFiles[0]!.path;
+			let count = 0;
+			let verifiedCount = 0;
+			let foundError = false;
 
-			const result = await this.verifySingleTransaction(headFile);
+			while (count < depth) {
+				const headFile = this.plugin.app.vault.getAbstractFileByPath(headPath);
+				if (!(headFile instanceof TFile)) break;
 
-			if (!result.ok) {
-				new Notice(`⚠️ Chain broken at: ${headFile.basename}\n${result.errorMsg}`, 8000);
-				foundError = true;
-				break;
+				const result = await this.verifySingleTransaction(headFile, true);
+
+				if (!result.ok) {
+					new Notice(`⚠️ Chain broken at: ${headFile.basename}\n${result.errorMsg}`, 8000);
+					foundError = true;
+					break;
+				}
+
+				verifiedCount++;
+				count++;
+
+				if (!result.prevPath) break; // Reached genesis
+				headPath = result.prevPath;
 			}
 
-			verifiedCount++;
-			count++;
-
-			if (!result.prevPath) break; // Reached genesis
-			headPath = result.prevPath;
-		}
-
-		if (!foundError) {
-			new Notice(`✓ Integrity verified: ${verifiedCount} transaction(s) intact.`);
+			if (!foundError) {
+				new Notice(`✓ Integrity verified: ${verifiedCount} transaction(s) intact.`);
+			}
+		} else {
+			// ── Standalone mode: verify each transaction independently (hash only) ──
+			let okCount = 0;
+			let failCount = 0;
+			for (const file of validTxFiles.slice(0, depth)) {
+				const result = await this.verifySingleTransaction(file, false);
+				if (result.ok) { okCount++; } else { failCount++; }
+			}
+			new Notice(failCount > 0
+				? `⚠️ ${failCount} tampered transaction(s) found. ✓ ${okCount} intact.`
+				: `✓ All ${okCount} transaction(s) intact.`);
 		}
 	}
 
-	// Verify a single transaction: recompute hash, check stored hash, verify prev chain link
-	private async verifySingleTransaction(file: TFile): Promise<{
+	// Verify a single transaction: recompute hash, check stored hash, optionally verify prev chain link
+	private async verifySingleTransaction(file: TFile, checkChain = true): Promise<{
 		ok: boolean;
 		errorMsg?: string;
 		prevPath?: string;
@@ -1161,9 +1173,13 @@ export class FinanceDashboardView extends BasesView {
 				};
 			}
 
+			// If chain verification is disabled, stop here — hash matches, tx is intact
+			if (!checkChain) return { ok: true };
+
 			// Verify the prev chain link
 			const prevTxRaw = fm[ACCOUNT_PREFIXES.PREV_VALID_TX]; // e.g. [[seed-transaction]]
 			if (!prevTxRaw) return { ok: true }; // No prev link — genesis
+
 
 			// Strip surrounding quotes (Obsidian may add them for YAML validity) and [[ ]] brackets
 			const prevBasename = prevTxRaw.replace(/^"|"$/g, '').replace(/^\[\[/, '').replace(/\]\]$/, '');
@@ -1205,7 +1221,7 @@ export class FinanceDashboardView extends BasesView {
 
 		} catch (error) {
 			console.error(`Error verifying ${file.path}: `, error);
-			return { ok: false, errorMsg: `Exception: ${error}` };
+			return { ok: false, errorMsg: `Exception: ${String(error)}` };
 		}
 	}
 
@@ -1320,7 +1336,7 @@ export class FinanceDashboardView extends BasesView {
 						nameDiv.createSpan({ text: ` (${units.toFixed(2)} units)`, cls: 'commodity-units' });
 					}
 
-					const valueSpan = row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value positive' });
+					row.createSpan({ text: formatCurrency(value, this.plugin.settings.currencySymbol), cls: 'account-value positive' });
 
 					// Add pricing formula
 					if (pricing) {
@@ -1540,7 +1556,7 @@ export class FinanceDashboardView extends BasesView {
 					nameDiv.createSpan({ text: ` (${units.toFixed(2)} units)`, cls: 'commodity-units' });
 				}
 
-				const valueSpan = row.createSpan({
+				row.createSpan({
 					text: formatCurrency(value, this.plugin.settings.currencySymbol),
 					cls: valueClass
 				});
