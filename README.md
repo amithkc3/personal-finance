@@ -14,6 +14,9 @@ A comprehensive personal finance dashboard for Obsidian, supporting double-entry
 - **Flexible & Customizable**: Works with your existing folder structure (customizable in settings).
 - **Mobile Friendly**: Responsive design that works great on mobile devices.
 
+## Dashboard Page Screenshot
+![screenshot](light-mode-personal-finance-screenshot.png)
+
 ## Installation
 
 ### Manual Installation
