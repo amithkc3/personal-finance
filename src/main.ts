@@ -12,6 +12,24 @@ import financesBaseContent from './resources/Finances.base';
 
 export const FinanceDashboardViewType = 'finance-dashboard';
 
+// Interfaces for external API (Datacore / BasesView) injected at runtime
+interface DatacoreValue {
+	data?: unknown;
+	date?: Date;
+}
+
+interface DatacoreEntry {
+	file: TFile;
+	getValue(prop: string): DatacoreValue | undefined | null;
+	getRawProperty(prop: string): unknown;
+}
+
+interface DatacoreData {
+	data?: DatacoreEntry[];
+	getOrder?(): string[];
+	getSummaryValue?(controller: unknown, data: unknown, prop: string, type: string): DatacoreValue | undefined | null;
+}
+
 // Strict account prefix definitions
 const ACCOUNT_PREFIXES = {
 	ASSET: 'Asset-',
@@ -59,8 +77,8 @@ export default class PersonalFinancePlugin extends Plugin {
 		this.registerBasesView(FinanceDashboardViewType, {
 			name: 'Personal Finance Dashboard',
 			icon: 'lucide-wallet',
-			factory: (controller: any, containerEl: HTMLElement) => {
-				return new FinanceDashboardView(controller, containerEl, this) as any
+			factory: (controller: unknown, containerEl: HTMLElement) => {
+				return new FinanceDashboardView(controller, containerEl, this) as unknown as BasesView;
 			},
 			options: () => ([]),
 		});
@@ -84,7 +102,7 @@ export default class PersonalFinancePlugin extends Plugin {
 
 	async loadSettings() {
 		// 1. Load local settings first to get the root folder path
-		const localData = await this.loadData();
+		const localData = (await this.loadData()) as Partial<FinancePluginSettings>;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, localData);
 
 		// 2. Try to load from vault settings file
@@ -92,13 +110,14 @@ export default class PersonalFinancePlugin extends Plugin {
 		if (await this.app.vault.adapter.exists(settingsPath)) {
 			try {
 				const content = await this.app.vault.adapter.read(settingsPath);
-				const vaultSettings = JSON.parse(content);
+				const vaultSettings = JSON.parse(content) as Partial<FinancePluginSettings>;
 				// Override local settings with vault settings
 				this.settings = Object.assign({}, this.settings, vaultSettings);
 				// Also update local data to match, to keep them in sync
 				await this.saveData(this.settings);
 			} catch (e) {
-				console.error('Error loading settings from vault:', e);
+				const err = e as Error;
+				console.error('Error loading settings from vault:', err.message);
 				new Notice('Error loading synced settings');
 			}
 		}
@@ -172,7 +191,7 @@ export default class PersonalFinancePlugin extends Plugin {
 			}
 
 			if (!(await this.app.vault.adapter.exists(guidePath))) {
-				await this.app.vault.create(guidePath, usageGuideContent);
+				await this.app.vault.create(guidePath, usageGuideContent as string);
 			}
 
 			// 2. Create Default Template
@@ -183,7 +202,7 @@ export default class PersonalFinancePlugin extends Plugin {
 					await this.app.vault.createFolder(templateDir);
 				}
 
-				await this.app.vault.create(this.settings.templateFilePath, transactionTemplateContent);
+				await this.app.vault.create(this.settings.templateFilePath, transactionTemplateContent as string);
 				new Notice('Created default transaction template');
 			}
 
@@ -191,7 +210,7 @@ export default class PersonalFinancePlugin extends Plugin {
 			const basePath = `${this.settings.rootFolderPath}/Finances.base`;
 			if (!(await this.app.vault.adapter.exists(basePath))) {
 				// Inject the dynamic transaction folder path
-				const baseContent = financesBaseContent.replace('{{TRANSACTIONS_FOLDER}}', this.settings.transactionsFolderPath);
+				const baseContent = (financesBaseContent as string).replace('{{TRANSACTIONS_FOLDER}}', this.settings.transactionsFolderPath);
 				await this.app.vault.create(basePath, baseContent);
 			}
 
@@ -256,7 +275,8 @@ class RatesAndPricesModal extends Modal {
 
 				// Process Prices
 				try {
-					const parsed = JSON.parse(pricesTextarea.value);
+					interface PriceItem { value: number; currency: "₹" | "$"; }
+					const parsed = JSON.parse(pricesTextarea.value) as Record<string, PriceItem>;
 
 					// Apply default currency if missing
 					for (const key in parsed) {
@@ -376,7 +396,7 @@ class ValidateTransactionsModal extends Modal {
 		// Input for N
 		const inputContainer = option2Container.createDiv({ cls: 'input-container-spacing' });
 
-		const label = inputContainer.createEl('label', { text: 'Number of transactions to verify (use -1 for all): ', cls: 'input-label-block' });
+		inputContainer.createEl('label', { text: 'Number of transactions to verify (use -1 for all): ', cls: 'input-label-block' });
 
 		const input = inputContainer.createEl('input', {
 			type: 'number',
@@ -473,15 +493,21 @@ export class FinanceDashboardView extends BasesView {
 	private containerEl: HTMLElement;
 	// @ts-ignore
 	public app: App;
-	public config: any;
-	public data: any;
-	private controller: any;
 	private plugin: PersonalFinancePlugin;
 	private cachedData: DashboardCache | null = null;
 
-	constructor(controller: any, parentEl: HTMLElement, plugin: PersonalFinancePlugin) {
+	// Typed getters for runtime-injected BasesView properties
+	private get datacoreConfig(): DatacoreData {
+		return this.config as unknown as DatacoreData;
+	}
+
+	private get datacoreData(): DatacoreData | null {
+		return this.data as unknown as DatacoreData | null;
+	}
+
+	constructor(controller: unknown, parentEl: HTMLElement, plugin: PersonalFinancePlugin) {
+		// @ts-ignore
 		super(controller);
-		this.controller = controller;
 		this.plugin = plugin;
 		this.containerEl = parentEl.createDiv('bases-finance-dashboard');
 	}
@@ -600,7 +626,7 @@ export class FinanceDashboardView extends BasesView {
 			expenses: new Map()
 		};
 
-		const propertiesToProcess = this.allProperties || this.config.getOrder();
+		const propertiesToProcess = this.allProperties || this.datacoreConfig.getOrder?.();
 		if (!propertiesToProcess) return categories;
 
 		for (const prop of propertiesToProcess) {
@@ -612,12 +638,16 @@ export class FinanceDashboardView extends BasesView {
 			if (!category) continue;
 
 			// Use optimized getSummaryValue API
-			// @ts-ignore
-			const summaryValue = this.data.getSummaryValue(this.controller, this.data.data, prop, 'Sum');
-			// @ts-ignore
+			const summaryValue = this.datacoreData?.getSummaryValue?.(
+				// @ts-ignore
+				this.controller,
+				this.datacoreData.data,
+				prop,
+				'Sum'
+			);
+
 			if (!summaryValue || summaryValue.data === null || summaryValue.data === undefined || typeof summaryValue.data !== 'number') continue;
 
-			// @ts-ignore
 			let sum = summaryValue.data;
 
 			// Apply commodity pricing with currency conversion if applicable.
@@ -764,15 +794,13 @@ export class FinanceDashboardView extends BasesView {
 		return `${Math.floor(seconds / 86400)} days ago`;
 	}
 
-	private hasCommodity(entry: any, accountProps: string[]): boolean {
+	private hasCommodity(entry: DatacoreEntry, accountProps: string[]): boolean {
 		for (const prop of accountProps) {
 			// @ts-ignore
 			const { name } = parsePropertyId(prop);
 			if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-				// @ts-ignore
 				const value = entry.getValue(prop);
-				// @ts-ignore
-				if (value && value.data) return true;
+				if (value && value.data != null) return true;
 			}
 		}
 		return false;
@@ -1241,13 +1269,13 @@ export class FinanceDashboardView extends BasesView {
 			}
 
 			const templateFile = this.plugin.app.vault.getAbstractFileByPath(templatePath);
-			if (!templateFile) {
-				new Notice('Error loading template file.');
+			if (!(templateFile instanceof TFile)) {
+				new Notice('Error loading template file. Is it a valid file?');
 				return;
 			}
 
 			// Read template content
-			const templateContent = await this.plugin.app.vault.read(templateFile as any);
+			const templateContent = await this.plugin.app.vault.read(templateFile);
 
 			// Generate filename
 			const now = new Date();
@@ -1683,17 +1711,20 @@ export class FinanceDashboardView extends BasesView {
 		for (const prop of accountProps) {
 			// @ts-ignore
 			const { name } = parsePropertyId(prop);
-			// @ts-ignore
-			const summaryValue = this.data.getSummaryValue(this.controller, this.data.data, prop, 'Sum');
+			const summaryValue = this.datacoreData?.getSummaryValue?.(
+				// @ts-ignore
+				this.controller,
+				this.datacoreData.data,
+				prop,
+				'Sum'
+			);
 			const td = summaryRow.createEl('td', { cls: 'summary-value' });
-			// @ts-ignore
+
 			if (summaryValue && summaryValue.data && typeof summaryValue.data === 'number') {
 				// Show raw quantity for commodities, currency for others
 				if (name.startsWith(ACCOUNT_PREFIXES.COMMODITY)) {
-					// @ts-ignore
 					td.textContent = summaryValue.data.toFixed(2);
 				} else {
-					// @ts-ignore
 					td.textContent = formatCurrency(summaryValue.data, this.plugin.settings.currencySymbol);
 				}
 			} else {
@@ -1701,12 +1732,11 @@ export class FinanceDashboardView extends BasesView {
 			}
 		}
 
-
 		// Create data rows (limit based on settings)
-		const entries = this.data.data || [];
+		const entries = this.datacoreData?.data || [];
 
 		// Sort by is_valid (invalid first) then by file modified time descending
-		entries.sort((a: any, b: any) => {
+		entries.sort((a: DatacoreEntry, b: DatacoreEntry) => {
 			// Read stored is_valid property
 			const isAValid = a.getRawProperty('is_valid') !== false;
 			const isBValid = b.getRawProperty('is_valid') !== false;
@@ -1755,12 +1785,10 @@ export class FinanceDashboardView extends BasesView {
 			// Comment column
 			if (otherProps.comment) {
 				const commentCell = row.createEl('td');
-				// @ts-ignore
 				const commentValue = entry.getValue(otherProps.comment);
-				// @ts-ignore
-				if (commentValue && commentValue.data) {
-					// @ts-ignore
-					const text = commentValue.data.toString();
+				if (commentValue && commentValue.data != null) {
+					const dataPrimitives = commentValue.data as string | number | boolean;
+					const text = String(dataPrimitives);
 					commentCell.textContent = text.length > 50 ? text.substring(0, 50) + '...' : text;
 				}
 			}
@@ -1952,12 +1980,11 @@ export class FinanceDashboardView extends BasesView {
 			const filepath = `${folderPath}/${filename}`;
 
 			await this.plugin.app.vault.create(filepath, content);
-			// @ts-ignore
 			new Notice(`Snapshot created: ${filename}`);
-		} catch (error: any) {
-			// @ts-ignore
+		} catch (err) {
+			const error = err as Error;
 			new Notice(`Error creating snapshot: ${error.message}`);
-			console.error('Snapshot creation error:', error);
+			console.error('Snapshot creation error:', error.message);
 		}
 	}
 
