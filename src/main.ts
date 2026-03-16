@@ -45,7 +45,7 @@ export default class PersonalFinancePlugin extends Plugin {
 		}));
 
 
-		this.addRibbonIcon('lucide-wallet', 'Open Finance Dashboard', async () => {
+		this.addRibbonIcon('lucide-wallet', 'Open finance dashboard', async () => {
 			const filePath = this.settings.financeBasePath;
 			const file = this.app.vault.getAbstractFileByPath(filePath);
 			if (file instanceof TFile) {
@@ -69,13 +69,13 @@ export default class PersonalFinancePlugin extends Plugin {
 		// Add commands
 		this.addCommand({
 			id: 'update-rates-and-prices',
-			name: 'Update Rates & Prices',
+			name: 'Update rates & prices',
 			callback: () => new RatesAndPricesModal(this.app, this).open()
 		});
 
 		this.addCommand({
 			id: 'update-table-rows',
-			name: 'Update Table Rows Count',
+			name: 'Update table rows count',
 			callback: () => new TableRowsModal(this.app, this).open()
 		});
 
@@ -225,61 +225,59 @@ class RatesAndPricesModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Update Rates & Prices' });
+		contentEl.createEl('h2', { text: 'Update rates & prices' });
 
 		// 1. Commodity Prices Section (moved first)
-		contentEl.createEl('h3', { text: 'Commodity Prices' });
+		contentEl.createEl('h3', { text: 'Commodity prices' });
 		contentEl.createEl('p', { text: 'JSON format: {"QCOM": {"value": 150.50, "currency": "$"}}' });
 
-		const pricesTextarea = contentEl.createEl('textarea');
+		const pricesTextarea = contentEl.createEl('textarea', { cls: 'modal-textarea' });
 		pricesTextarea.value = JSON.stringify(this.plugin.settings.commodityPrices, null, 2);
-		pricesTextarea.style.width = '100%';
-		pricesTextarea.style.height = '300px';
-		pricesTextarea.style.marginBottom = '20px';
 
 		// 2. Currency Rate Section
-		contentEl.createEl('h3', { text: 'USD to INR Rate' });
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- USD and INR are proper acronyms
+		contentEl.createEl('h3', { text: 'USD to INR rate' });
 		const rateInput = contentEl.createEl('input', {
 			type: 'number',
-			value: this.plugin.settings.usdToInr.toString()
+			value: this.plugin.settings.usdToInr.toString(),
+			cls: 'modal-input'
 		});
-		rateInput.style.width = '100%';
-		rateInput.style.marginBottom = '20px';
 
 		// Save Button
-		const button = contentEl.createEl('button', { text: 'Save All Changes', cls: 'mod-cta' });
-		button.style.width = '100%';
+		const button = contentEl.createEl('button', { text: 'Save all changes', cls: 'mod-cta modal-button-full' });
 
-		button.addEventListener('click', async () => {
-			// Process Rate
-			const newRate = parseFloat(rateInput.value);
-			if (!isNaN(newRate) && newRate > 0) {
-				this.plugin.settings.usdToInr = newRate;
-			}
-
-			// Process Prices
-			try {
-				const parsed = JSON.parse(pricesTextarea.value);
-
-				// Apply default currency if missing
-				for (const key in parsed) {
-					const item = parsed[key];
-					if (typeof item === 'object' && item !== null && typeof item.value === 'number') {
-						if (!item.currency) {
-							item.currency = this.plugin.settings.currencySymbol;
-						}
-					}
+		button.addEventListener('click', () => {
+			void (async () => {
+				// Process Rate
+				const newRate = parseFloat(rateInput.value);
+				if (!isNaN(newRate) && newRate > 0) {
+					this.plugin.settings.usdToInr = newRate;
 				}
 
-				this.plugin.settings.commodityPrices = parsed;
-			} catch {
-				new Notice('Invalid JSON in commodity prices');
-				return; // Stop if JSON is invalid
-			}
+				// Process Prices
+				try {
+					const parsed = JSON.parse(pricesTextarea.value);
 
-			await this.plugin.saveSettings();
-			new Notice(`Settings updated! Rate: ${newRate}, Prices saved.`);
-			this.close();
+					// Apply default currency if missing
+					for (const key in parsed) {
+						const item = parsed[key];
+						if (typeof item === 'object' && item !== null && typeof item.value === 'number') {
+							if (!item.currency) {
+								item.currency = this.plugin.settings.currencySymbol;
+							}
+						}
+					}
+
+					this.plugin.settings.commodityPrices = parsed;
+				} catch {
+					new Notice('Invalid JSON in commodity prices');
+					return; // Stop if JSON is invalid
+				}
+
+				await this.plugin.saveSettings();
+				new Notice(`Settings updated! Rate: ${newRate}, Prices saved.`);
+				this.close();
+			})();
 		});
 	}
 
@@ -299,26 +297,27 @@ class TableRowsModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Update Table Rows Count' });
+		contentEl.createEl('h2', { text: 'Update table rows count' });
 
 		const input = contentEl.createEl('input', {
 			type: 'number',
-			value: this.plugin.settings.tableRowsToShow.toString()
+			value: this.plugin.settings.tableRowsToShow.toString(),
+			cls: 'modal-input-sm'
 		});
-		input.style.width = '100%';
-		input.style.marginBottom = '10px';
 
 		const button = contentEl.createEl('button', { text: 'Update' });
-		button.addEventListener('click', async () => {
-			const value = parseInt(input.value);
-			if (!isNaN(value) && value > 0) {
-				this.plugin.settings.tableRowsToShow = value;
-				await this.plugin.saveSettings();
-				new Notice(`Table rows updated to ${value} `);
-				this.close();
-			} else {
-				new Notice('Please enter a valid number');
-			}
+		button.addEventListener('click', () => {
+			void (async () => {
+				const value = parseInt(input.value);
+				if (!isNaN(value) && value > 0) {
+					this.plugin.settings.tableRowsToShow = value;
+					await this.plugin.saveSettings();
+					new Notice(`Table rows updated to ${value} `);
+					this.close();
+				} else {
+					new Notice('Please enter a valid number');
+				}
+			})();
 		});
 	}
 
@@ -338,80 +337,68 @@ class ValidateTransactionsModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Transaction Actions' });
+		contentEl.createEl('h2', { text: 'Transaction actions' });
 
 		contentEl.createEl('p', {
 			text: 'Choose a transaction action:'
 		});
 
 		// Option 1: Validate New Transactions (GREEN)
-		const option1Container = contentEl.createDiv({ cls: 'validation-option' });
-		option1Container.style.marginBottom = '20px';
-		option1Container.style.padding = '15px';
-		option1Container.style.border = '1px solid var(--background-modifier-border)';
-		option1Container.style.borderRadius = '8px';
+		const option1Container = contentEl.createDiv({ cls: 'validation-option-first' });
 
-		option1Container.createEl('h4', { text: 'Validate New Transactions' });
+		option1Container.createEl('h4', { text: 'Validate new transactions' });
 		option1Container.createEl('p', {
 			text: 'Finds transaction files without a hash (new/unlocked). Validates commodity prices and zero-sum rule, links to the previous valid transaction (blockchain-style), and locks valid transactions.',
 			cls: 'setting-item-description'
 		});
 
 		const validateInvalidBtn = option1Container.createEl('button', {
-			text: 'Validate New Transactions'
+			text: 'Validate new transactions',
+			cls: 'validate-action-btn'
 		});
-		validateInvalidBtn.style.width = '100%';
-		validateInvalidBtn.style.backgroundColor = '#28a745';
-		validateInvalidBtn.style.color = 'white';
-		validateInvalidBtn.addEventListener('click', async () => {
-			this.close();
-			await this.dashboardView.validateInvalidTransactions();
+		validateInvalidBtn.addEventListener('click', () => {
+			void (async () => {
+				this.close();
+				await this.dashboardView.validateInvalidTransactions();
+			})();
 		});
 
 		// Option 2: Verify Transaction Integrity (BLUE/RED with input)
 		const option2Container = contentEl.createDiv({ cls: 'validation-option' });
-		option2Container.style.padding = '15px';
-		option2Container.style.border = '1px solid var(--background-modifier-border)';
-		option2Container.style.borderRadius = '8px';
 
-		option2Container.createEl('h4', { text: 'Verify Transaction Integrity' });
+		option2Container.createEl('h4', { text: 'Verify transaction integrity' });
 		option2Container.createEl('p', {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- description text is sentence case
 			text: 'Uses checksum comparison to detect tampering. Verifies recent N transactions or all transactions (-1).',
 			cls: 'setting-item-description'
 		});
 
 		// Input for N
-		const inputContainer = option2Container.createDiv();
-		inputContainer.style.marginTop = '10px';
-		inputContainer.style.marginBottom = '10px';
+		const inputContainer = option2Container.createDiv({ cls: 'input-container-spacing' });
 
-		const label = inputContainer.createEl('label', { text: 'Number of transactions to verify (use -1 for all): ' });
-		label.style.display = 'block';
-		label.style.marginBottom = '5px';
+		const label = inputContainer.createEl('label', { text: 'Number of transactions to verify (use -1 for all): ', cls: 'input-label-block' });
 
 		const input = inputContainer.createEl('input', {
 			type: 'number',
-			value: '50'
+			value: '50',
+			cls: 'verify-input'
 		});
-		input.style.width = '100%';
-		input.style.padding = '5px';
 		input.min = '-1';
 
 		const verifyBtn = option2Container.createEl('button', {
-			text: 'Verify Transaction Integrity'
+			text: 'Verify transaction integrity',
+			cls: 'verify-action-btn'
 		});
-		verifyBtn.style.width = '100%';
-		verifyBtn.style.marginTop = '10px';
-		verifyBtn.style.backgroundColor = 'var(--interactive-accent)';
-		verifyBtn.style.color = 'white';
-		verifyBtn.addEventListener('click', async () => {
-			const count = parseInt(input.value);
-			if (isNaN(count) || count < -1) {
-				new Notice('Please enter a valid number (-1 for all, or positive number)');
-				return;
-			}
-			this.close();
-			await this.dashboardView.verifyTransactionIntegrity(count);
+		verifyBtn.addEventListener('click', () => {
+			void (async () => {
+				const count = parseInt(input.value);
+				if (isNaN(count) || count < -1) {
+					new Notice('Please enter a valid number (-1 for all, or positive number)');
+					return;
+				}
+				this.close();
+				await this.dashboardView.verifyTransactionIntegrity(count);
+			})();
 		});
 	}
 
@@ -679,7 +666,7 @@ export class FinanceDashboardView extends BasesView {
 			netWorth = totalAssets + totalLiabilities;
 
 			// Trigger async cache refresh in background
-			this.refreshDashboardData(false).then(data => {
+			void this.refreshDashboardData(false).then(data => {
 				// Update if data changed
 				if (data.netWorth !== netWorth) {
 					this.onDataUpdated();
@@ -695,7 +682,7 @@ export class FinanceDashboardView extends BasesView {
 		this.createTransactionTable();
 
 		// Row 3: Net Worth Line Chart (full width)
-		this.createNetWorthChart();
+		void this.createNetWorthChart();
 
 		// Row 4 & 5: Category blocks with integrated pie charts
 		this.createCategoryBlocks(categories);
@@ -709,13 +696,8 @@ export class FinanceDashboardView extends BasesView {
 
 		// Header with Refresh Button
 		const headerContainer = netWorthCard.createDiv('net-worth-header-container');
-		headerContainer.style.display = 'flex';
-		headerContainer.style.justifyContent = 'space-between';
-		headerContainer.style.alignItems = 'center';
-		headerContainer.style.width = '100%';
-		headerContainer.style.marginBottom = '8px';
 
-		headerContainer.createEl('h3', { text: 'NET WORTH', cls: 'net-worth-title' });
+		headerContainer.createEl('h3', { text: 'Net worth', cls: 'net-worth-title' });
 
 		const refreshBtn = headerContainer.createEl('button', {
 			cls: 'refresh-button-small'
@@ -724,10 +706,12 @@ export class FinanceDashboardView extends BasesView {
 		const refreshIcon = refreshBtn.createSpan({ cls: 'refresh-icon' });
 		refreshIcon.textContent = '↻';
 		refreshBtn.createSpan({ text: ' Refresh' });
-		refreshBtn.addEventListener('click', async (e) => {
+		refreshBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			await this.refreshDashboardData(true);
-			this.onDataUpdated();
+			void (async () => {
+				await this.refreshDashboardData(true);
+				this.onDataUpdated();
+			})();
 		});
 
 		const infoContainer = netWorthCard.createDiv('net-worth-info');
@@ -740,9 +724,6 @@ export class FinanceDashboardView extends BasesView {
 			const date = new Date(lastUpdated);
 			const timeAgo = this.getTimeAgo(date);
 			lastUpdatedEl.textContent = `Last refreshed: ${timeAgo}`;
-			lastUpdatedEl.style.fontSize = '0.75rem';
-			lastUpdatedEl.style.color = 'var(--text-muted)';
-			lastUpdatedEl.style.marginTop = '4px';
 		}
 
 		// 2. Actions Block (Right/Bottom)
@@ -755,8 +736,10 @@ export class FinanceDashboardView extends BasesView {
 		const logIcon = logTransactionBtn.createSpan({ cls: 'action-icon' });
 		logIcon.textContent = '+';
 		logTransactionBtn.createSpan({ text: ' Log Transaction' });
-		logTransactionBtn.addEventListener('click', async () => {
-			await this.logTransaction();
+		logTransactionBtn.addEventListener('click', () => {
+			void (async () => {
+				await this.logTransaction();
+			})();
 		});
 
 		// Unified Update Rates/Prices button (Gear icon)
@@ -1428,7 +1411,7 @@ export class FinanceDashboardView extends BasesView {
 		// Asset Distribution Chart
 		if (categories.assets.size > 0) {
 			const assetChartDiv = chartsContainer.createDiv('chart-wrapper');
-			assetChartDiv.createEl('h3', { text: 'Asset Distribution' });
+			assetChartDiv.createEl('h3', { text: 'Asset distribution' });
 			const canvas = assetChartDiv.createEl('canvas');
 			createPieChart(canvas, categories.assets, 'assets', this.plugin.settings.currencySymbol);
 		}
@@ -1436,7 +1419,7 @@ export class FinanceDashboardView extends BasesView {
 		// Expense Distribution Chart
 		if (categories.expenses.size > 0) {
 			const expenseChartDiv = chartsContainer.createDiv('chart-wrapper');
-			expenseChartDiv.createEl('h3', { text: 'Expense Distribution' });
+			expenseChartDiv.createEl('h3', { text: 'Expense distribution' });
 			const canvas = expenseChartDiv.createEl('canvas');
 			createPieChart(canvas, categories.expenses, 'expenses', this.plugin.settings.currencySymbol);
 		}
@@ -1576,9 +1559,8 @@ export class FinanceDashboardView extends BasesView {
 						formulaDiv.textContent = `${units.toFixed(2)} units × ${pricing.value} ${pricing.currency}/unit`;
 					}
 				} else {
-					const debugDiv = row.createDiv({ cls: 'commodity-formula' });
+					const debugDiv = row.createDiv({ cls: 'commodity-formula commodity-warning' });
 					debugDiv.textContent = `⚠ Pricing not configured for "${commodityName}"`;
-					debugDiv.style.color = 'var(--text-error)';
 				}
 			} else {
 				row.createSpan({ text: name, cls: 'account-name' });
@@ -1614,13 +1596,9 @@ export class FinanceDashboardView extends BasesView {
 		const tableContainer = this.containerEl.createDiv('transaction-table-section');
 
 		// Header with Validate Button
-		const headerContainer = tableContainer.createDiv('table-header-container');
-		headerContainer.style.display = 'flex';
-		headerContainer.style.justifyContent = 'space-between';
-		headerContainer.style.alignItems = 'center';
-		headerContainer.style.marginBottom = '10px';
+		const headerContainer = tableContainer.createDiv('table-header-container section-header-row');
 
-		headerContainer.createEl('h3', { text: 'Recent Transactions', cls: 'table-title' });
+		headerContainer.createEl('h3', { text: 'Recent transactions', cls: 'table-title' });
 
 		const validateBtn = headerContainer.createEl('button', {
 			cls: 'validate-button-small'
@@ -1771,7 +1749,7 @@ export class FinanceDashboardView extends BasesView {
 			fileLink.addEventListener('click', (e) => {
 				e.preventDefault();
 				// @ts-ignore
-				this.app.workspace.openLinkText(entry.file.path, '', false);
+				void this.app.workspace.openLinkText(entry.file.path, '', false);
 			});
 
 			// Comment column
@@ -1878,12 +1856,14 @@ export class FinanceDashboardView extends BasesView {
 	private createSnapshotButton(categories: AccountCategory): void {
 		const buttonContainer = this.containerEl.createDiv('snapshot-button-container');
 		const button = buttonContainer.createEl('button', {
-			text: 'Create Snapshot',
+			text: 'Create snapshot',
 			cls: 'snapshot-button'
 		});
 
-		button.addEventListener('click', async () => {
-			await this.createSnapshot(categories);
+		button.addEventListener('click', () => {
+			void (async () => {
+				await this.createSnapshot(categories);
+			})();
 		});
 	}
 
@@ -2088,13 +2068,9 @@ export class FinanceDashboardView extends BasesView {
 		const chartContainer = this.containerEl.createDiv('net-worth-chart-container');
 
 		// Header with Snapshot Button
-		const headerContainer = chartContainer.createDiv('chart-header-container');
-		headerContainer.style.display = 'flex';
-		headerContainer.style.justifyContent = 'space-between';
-		headerContainer.style.alignItems = 'center';
-		headerContainer.style.marginBottom = '10px';
+		const headerContainer = chartContainer.createDiv('chart-header-container section-header-row');
 
-		headerContainer.createEl('h3', { text: 'Net Worth Over Time', cls: 'chart-title' });
+		headerContainer.createEl('h3', { text: 'Net worth over time', cls: 'chart-title' });
 
 		const snapshotBtn = headerContainer.createEl('button', {
 			cls: 'snapshot-button-small'
@@ -2102,9 +2078,11 @@ export class FinanceDashboardView extends BasesView {
 		const snapshotIcon = snapshotBtn.createSpan({ cls: 'snapshot-icon' });
 		snapshotIcon.textContent = '+';
 		snapshotBtn.createSpan({ text: ' Add Snapshot' });
-		snapshotBtn.addEventListener('click', async () => {
-			// Pass isForSnapshot=true so Commodity values are stored as raw unit quantities
-			await this.createSnapshot(this.categorizeAccounts(true));
+		snapshotBtn.addEventListener('click', () => {
+			void (async () => {
+				// Pass isForSnapshot=true so Commodity values are stored as raw unit quantities
+				await this.createSnapshot(this.categorizeAccounts(true));
+			})();
 		});
 
 		const canvas = chartContainer.createEl('canvas');

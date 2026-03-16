@@ -727,3 +727,98 @@
     height: 16px;
     stroke-width: 2px;
 }
+
+/* ─── Batch 3: Replacing inline styles ─── */
+
+/* Reusable section header row (used in net-worth, table, chart headers) */
+.section-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.net-worth-header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+/* Modal form element styles */
+.modal-textarea {
+    width: 100%;
+    height: 300px;
+    margin-bottom: 20px;
+}
+
+.modal-input {
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+.modal-input-sm {
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+.modal-button-full {
+    width: 100%;
+}
+
+/* Validation modal option containers */
+.validation-option {
+    padding: 15px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+}
+
+.validation-option-first {
+    padding: 15px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+/* Validation modal buttons */
+.validate-action-btn {
+    width: 100%;
+    background-color: #28a745;
+    color: white;
+}
+
+.verify-action-btn {
+    width: 100%;
+    margin-top: 10px;
+    background-color: var(--interactive-accent);
+    color: white;
+}
+
+/* Input container spacing (for verify count input) */
+.input-container-spacing {
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.input-label-block {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.verify-input {
+    width: 100%;
+    padding: 5px;
+}
+
+/* Last updated timestamp in net worth card */
+.last-updated-indicator {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+/* Commodity pricing warning */
+.commodity-warning {
+    color: var(--text-error);
+}
