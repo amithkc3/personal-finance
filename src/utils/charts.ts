@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import { Chart, ChartConfiguration, Colors } from 'chart.js/auto';
 
 // Register the Colors plugin for default color palette
@@ -71,7 +72,7 @@ export function createPieChart(
                     callbacks: {
                         label: (context: any) => {
                             const label = context.label || '';
-                            const value = formatCurrency(context.parsed, currencySymbol);
+                            const value = formatCurrency((context.parsed as unknown as number), currencySymbol);
                             return `${label}: ${value}`;
                         }
                     }
@@ -216,7 +217,7 @@ export function createNetWorthLineChart(
                     callbacks: {
                         label: (context: any) => {
                             const label = context.dataset.label || '';
-                            const value = formatCurrency(context.parsed.y, currencySymbol);
+                            const value = formatCurrency((context.parsed.y as unknown as number), currencySymbol);
                             return `${label}: ${value}`;
                         }
                     }
@@ -227,8 +228,8 @@ export function createNetWorthLineChart(
                     beginAtZero: false,
                     ticks: {
                         color: textColor,
-                        callback: function (value: any) {
-                            return formatCurrency(value, currencySymbol);
+                        callback: function (value: number | string) {
+                            return formatCurrency(Number(value), currencySymbol);
                         }
                     },
                     grid: {

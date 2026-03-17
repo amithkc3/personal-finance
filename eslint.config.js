@@ -1,7 +1,7 @@
-// eslint.config.mjs
 import tsparser from "@typescript-eslint/parser";
 import { defineConfig } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
+import globals from "globals";
 
 export default defineConfig([
     { ignores: ["**/*.mjs", "**/*.js"] },
@@ -12,6 +12,7 @@ export default defineConfig([
             parser: tsparser,
             parserOptions: { project: "./tsconfig.json" },
             globals: {
+                ...globals.browser,
                 console: "readonly",
             },
         },
@@ -19,4 +20,3 @@ export default defineConfig([
         // You can add your own configuration to override or add rules
     },
 ]);
-

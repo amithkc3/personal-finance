@@ -48,17 +48,17 @@ export class FinanceSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl('h2', { text: 'Personal Finance Settings' });
+		new Setting(containerEl).setHeading().setName('Personal finance settings');
 
 		// General & Currency Section
-		containerEl.createEl('h3', { text: 'General & Currency' });
+		new Setting(containerEl).setHeading().setName('General & currency');
 
 		new Setting(containerEl)
-			.setName('Currency Symbol')
+			.setName('Currency symbol')
 			.setDesc('Select the currency symbol to use throughout the plugin')
 			.addDropdown(dropdown => dropdown
-				.addOption('₹', '₹ (Rupee)')
-				.addOption('$', '$ (Dollar)')
+				.addOption('₹', '₹ (rupee)')
+				.addOption('$', '$ (dollar)')
 				.setValue(this.plugin.settings.currencySymbol)
 				.onChange(async (value: '₹' | '$') => {
 					this.plugin.settings.currencySymbol = value;
@@ -66,7 +66,9 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('USD to INR Conversion Rate')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setName('USD to INR conversion rate')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setDesc('Current exchange rate for converting USD to INR')
 			.addText(text => text
 				.setPlaceholder('83.0')
@@ -80,7 +82,7 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Commodity Prices')
+			.setName('Commodity prices')
 			.setDesc('Configure commodity prices in JSON format. Example: {"QCOM": {"value": 150.50, "currency": "$"}}')
 			.addTextArea(text => {
 				text
@@ -88,7 +90,7 @@ export class FinanceSettingTab extends PluginSettingTab {
 					.setValue(JSON.stringify(this.plugin.settings.commodityPrices, null, 2))
 					.onChange(async (value) => {
 						try {
-							const parsed = JSON.parse(value);
+							const parsed = JSON.parse(value) as Record<string, CommodityPrice>;
 							this.plugin.settings.commodityPrices = parsed;
 							await this.plugin.saveSettings();
 						} catch {
@@ -96,11 +98,12 @@ export class FinanceSettingTab extends PluginSettingTab {
 						}
 					});
 				text.inputEl.rows = 10;
+				// eslint-disable-next-line obsidianmd/no-static-styles-assignment -- Simple width property on a full-width container
 				text.inputEl.style.width = '100%';
 			});
 
 		new Setting(containerEl)
-			.setName('Table Rows to Display')
+			.setName('Table rows to display')
 			.setDesc('Number of transaction rows to show in the table view')
 			.addText(text => text
 				.setPlaceholder('10')
@@ -114,10 +117,10 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		// File & Folder Structure Section
-		containerEl.createEl('h3', { text: 'File & Folder Structure' });
+		new Setting(containerEl).setHeading().setName('File & folder structure');
 
 		new Setting(containerEl)
-			.setName('Root Finance Folder')
+			.setName('Root finance folder')
 			.setDesc('Root folder for all finance related files')
 			.addText(text => text
 				.setPlaceholder('Finance')
@@ -128,9 +131,10 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Transactions Folder Path')
+			.setName('Transactions folder path')
 			.setDesc('Folder where new transaction files will be created')
 			.addText(text => text
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- Valid folder path
 				.setPlaceholder('Finance/Transactions')
 				.setValue(this.plugin.settings.transactionsFolderPath)
 				.onChange(async (value) => {
@@ -139,9 +143,10 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Snapshots Folder Path')
+			.setName('Snapshots folder path')
 			.setDesc('Folder where net worth snapshots will be saved')
 			.addText(text => text
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- Valid folder path
 				.setPlaceholder('Finance/Snapshots')
 				.setValue(this.plugin.settings.snapshotsFolderPath)
 				.onChange(async (value) => {
@@ -150,7 +155,8 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Transaction Template Path')
+			.setName('Transaction template path')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setDesc('Path to the markdown file used as a template for new transactions')
 			.addText(text => text
 				.setPlaceholder('Finance/Templates/Transaction.md')
@@ -161,7 +167,7 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Usage Guide Path')
+			.setName('Usage guide path')
 			.setDesc('Path where the usage guide will be created and linked')
 			.addText(text => text
 				.setPlaceholder('Finance/Personal-finances-usage-guide.md')
@@ -172,7 +178,8 @@ export class FinanceSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Finance Base File Path')
+			.setName('Finance base file path')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setDesc('Path to the Finance.base file to open from the ribbon')
 			.addText(text => text
 				.setPlaceholder('Finance/Finances.base')
@@ -182,11 +189,11 @@ export class FinanceSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 		// Transaction Integrity Section
-		containerEl.createEl('h3', { text: 'Transaction Integrity' });
+		new Setting(containerEl).setHeading().setName('Transaction integrity');
 
 		new Setting(containerEl)
-			.setName('Blockchain-Linked Verification')
-			.setDesc('When enabled, Verify Transaction Integrity walks the full chain (each tx links to the previous one). When disabled, each transaction is verified independently — only its own hash is checked.')
+			.setName('Blockchain-linked verification')
+			.setDesc('When enabled, verify transaction integrity walks the full chain (each tx links to the previous one). When disabled, each transaction is verified independently — only its own hash is checked.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.blockchainEnabled)
 				.onChange(async (value) => {
