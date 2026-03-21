@@ -9,6 +9,8 @@ import usageGuideContent from './resources/Personal-finances-usage-guide.md';
 import transactionTemplateContent from './resources/Transaction.md';
 // @ts-ignore
 import financesBaseContent from './resources/Finances.base';
+// @ts-ignore
+import seedTransactionSampleContent from './resources/Seed-Transaction-Sample.md';
 
 export const FinanceDashboardViewType = 'finance-dashboard';
 
@@ -219,7 +221,9 @@ export default class PersonalFinancePlugin extends Plugin {
 			if (!(await this.app.vault.adapter.exists(seedPath))) {
 				const seedDate = new Date().toISOString().slice(0, 16);
 				const seedHash = 'seed0000'; // Fixed genesis hash
-				const seedContent = `---\ncomment: Genesis seed transaction — do not edit\ndate: ${seedDate}\nhash: ${seedHash}\n${ACCOUNT_PREFIXES.TRANSACTION_ID}: 0\nis_valid: true\n---\n\n# Seed Transaction\nThis is the genesis block for the transaction integrity chain.\n`;
+				const seedContent = (seedTransactionSampleContent as string)
+					.replace('{{SEED_DATE}}', seedDate)
+					.replace('{{SEED_HASH}}', seedHash);
 				await this.app.vault.create(seedPath, seedContent);
 				new Notice('Created seed transaction (genesis block)');
 			}
